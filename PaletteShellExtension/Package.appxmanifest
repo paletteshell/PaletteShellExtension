@@ -9,18 +9,15 @@
   IgnorableNamespaces="uap uap3 rescap">
 
   <Identity
-    Name="PaletteShellExtension"
-    Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    Name="phireForge.PaletteShell"
+    Publisher="CN=7340D37C-B15E-4DA1-B9DD-9B688A69713D"
     Version="0.0.1.0" />
-  <!-- When you're ready to publish your extension, you'll need to change the
-       Publisher= to match your own identity -->
-
   <Properties>
     <DisplayName>PaletteShell</DisplayName>
     <PublisherDisplayName>phireForge</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
-
+  
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.19041.0" />
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.19041.0" />
@@ -37,10 +34,14 @@
       <uap:VisualElements
         DisplayName="PaletteShell"
         Description="PaletteShell"
-        BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="#1E4D6D">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"  Square71x71Logo="Assets\SmallTile.png" Square310x310Logo="Assets\LargeTile.png" ShortName="PaletteShell">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square310x310Logo"/>
+            <uap:ShowOn Tile="wide310x150Logo"/>
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile >
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
       <Extensions>
