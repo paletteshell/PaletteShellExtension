@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # PaletteShell Extension
 
 **PaletteShell** is a Windows Command Palette extension that lets you run custom PowerShell scripts directly from the Command Palette. Transform clipboard text, generate GUIDs, format JSON, and automate your daily workflows—all without leaving your keyboard.
@@ -652,3 +653,7 @@ Built with:
 **Made with ❤️ using .NET 9 and Windows App SDK**
 
 *Press Win + Space, type "PaletteShell", and start automating!*
+=======
+# PaletteShellExtension
+PaletteShell brings your PowerShell scripts into the Windows Command Palette — discover, search, and run custom automation instantly.
+>>>>>>> bac05fedaed41d3a38aefc27a97c0fe0b1795fea
