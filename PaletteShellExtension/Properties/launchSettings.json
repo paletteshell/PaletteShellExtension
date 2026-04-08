@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "PaletteShellExtension (Package)": {
+      "commandName": "MsixPackage",
+      "doNotLaunchApp": true
+    },
+    "PaletteShellExtension (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
