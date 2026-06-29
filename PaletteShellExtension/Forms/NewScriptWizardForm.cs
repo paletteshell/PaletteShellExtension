@@ -1,12 +1,10 @@
 ﻿using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Forms;
 internal sealed partial class NewScriptWizardForm : FormContent
@@ -15,7 +13,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
     public NewScriptWizardForm(string root)
     {
-        TemplateJson = $$"""
+        TemplateJson = """
 {
   "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
   "type": "AdaptiveCard",
@@ -30,16 +28,6 @@ internal sealed partial class NewScriptWizardForm : FormContent
       "value": "MyScript"
     },
     {
-      "type": "Input.ChoiceSet",
-      "id": "template",
-      "label": "Template",
-      "style": "compact",
-      "value": "blank",
-      "choices": [
-        { "$data": "${templates}", "title": "${title}", "value": "${value}" }
-      ]
-    },
-    {
       "type": "Input.Toggle",
       "id": "open",
       "title": "Open after create",
@@ -51,15 +39,6 @@ internal sealed partial class NewScriptWizardForm : FormContent
   "actions": [
     { "type": "Action.Submit", "title": "Create", "data": { "verb": "create" } },
     { "type": "Action.Submit", "title": "Cancel", "data": { "verb": "cancel" } }
-  ]
-}
-
-""";
-
-        DataJson = $$"""
-{
-  "templates": [
-    { "title": "Blank script", "value": "blank" },
   ]
 }
 """;
@@ -80,11 +59,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
             return CommandResult.GoBack();
 
         var rawName = formInput["name"]?.ToString()?.Trim();
-        var template = formInput["template"]?.ToString() ?? "blank";
         var open = (formInput["open"]?.ToString() ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
 
         var name = string.IsNullOrWhiteSpace(rawName) ? "MyScript" : rawName;
-        var path = CreateScript(_root, name, template);
+        var path = CreateScript(_root, name);
 
         if (open && path is not null)
             OpenInEditor(path);
@@ -92,7 +70,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
         return CommandResult.GoBack();
     }
 
-    private static string? CreateScript(string root, string rawName, string templateKey)
+    private static string? CreateScript(string root, string rawName)
     {
         Directory.CreateDirectory(root);
 
@@ -102,7 +80,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
         var full = UniquePath(Path.Combine(root, safe));
         var utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        File.WriteAllText(full, BuildTemplate(full, templateKey), utf8NoBom);
+        File.WriteAllText(full, DefaultHeader(Path.GetFileNameWithoutExtension(full)) + BlankBody(), utf8NoBom);
         return full;
     }
     private static string Sanitize(string name)
@@ -126,18 +104,6 @@ internal sealed partial class NewScriptWizardForm : FormContent
             if (!File.Exists(candidate)) return candidate;
         }
     }
-    private static string BuildTemplate(string path, string key)
-    {
-        var fileName = Path.GetFileNameWithoutExtension(path);
-        return key switch
-        {
-            "clipboard-csv" => ClipboardCsvHeader(fileName) + ClipboardCsvBody(),
-            "index-lines" => IndexLinesHeader(fileName) + IndexLinesBody(),
-            _ => DefaultHeader(fileName) + BlankBody()
-        };
-    }
-
-
     private static void OpenInEditor(string file)
     {
         var editor = Environment.GetEnvironmentVariable("VISUAL")
@@ -166,7 +132,6 @@ Host: pwsh
 Cwd: {{ScriptDir}}
 Mutex:
 Output: None
-OutputAction: None
 #>
 ";
 
@@ -182,66 +147,5 @@ param(
 # Write-Host ""Hello from PaletteShell!""
 ";
 
-    private static string ClipboardCsvHeader(string name) =>
-$@"using module .\PaletteScriptAttributes.psm1
-
-<#
-.SYNOPSIS
-    Clipboard → CSV (quoted)
-.DESCRIPTION
-    Convert multiline clipboard text to comma-delimited, quote-wrapped CSV and copy back.
-#>
-[ScriptHost('pwsh')]
-[ScriptGroup('Clipboard')]
-[ScriptIcon('🧾')]
-[ScriptTimeout(15000)]
-[ScriptOutput('None')]
-[CmdletBinding()]
-";
-
-    private static string ClipboardCsvBody() =>
-@"
-param()
-
-$text  = Get-ClipboardText
-$lines = $text -split ""(\r\n|\n|\r)"" | Where-Object { $_ -ne """" }
-$csv   = ($lines | ForEach-Object { '""' + ($_ -replace '""','""""') + '""' }) -join ','
-Set-ClipboardText $csv
-Write-Host ""Converted $($lines.Count) lines to CSV and copied to clipboard""
-";
-
-    private static string IndexLinesHeader(string name) =>
-$@"using module .\PaletteScriptAttributes.psm1
-
-<#
-.SYNOPSIS
-    Add index to lines in file
-.DESCRIPTION
-    Writes <file>.indexed.txt next to the original.
-.PARAMETER Path
-    The file to index
-#>
-[ScriptHost('pwsh')]
-[ScriptCwd('{{ScriptDir}}')]
-[ScriptGroup('Files')]
-[ScriptIcon('🔢')]
-[ScriptTimeout(30000)]
-[ScriptOutput('None')]
-[CmdletBinding()]
-";
-
-    private static string IndexLinesBody() =>
-@"
-param(
-    [Parameter(Mandatory=$true, HelpMessage=""File to index"")]
-    [string]$Path
-)
-
-$lines   = Get-Content -LiteralPath $Path
-$indexed = for ($i=0; $i -lt $lines.Count; $i++) { ""{0:D4}: {1}"" -f ($i+1), $lines[$i] }
-$out     = [System.IO.Path]::ChangeExtension($Path, "".indexed.txt"")
-$indexed | Set-Content -LiteralPath $out -NoNewline:$false
-Write-Host ""Wrote $out""
-";
 }
 

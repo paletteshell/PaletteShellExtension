@@ -167,3 +167,9 @@ BenchmarkDotNet.Artifacts/
 # =========================
 !Directory.Build.rsp
 /PaletteShellExtension/bundle_mapping.txt
+/PaletteShellExtension/PackageApplication.ps1
+/PaletteShellExtension/Assets/LargeTile.png
+/PaletteShellExtension/Assets/SmallTile.png
+/PaletteShellExtension/Assets/SplashScreen.png
+/PaletteShellExtension/Assets/Square150x150Logo.png
+/PaletteShellExtension/Assets/Wide310x150Logo.png

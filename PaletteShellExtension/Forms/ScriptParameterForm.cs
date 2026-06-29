@@ -2,7 +2,6 @@ using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -43,8 +42,6 @@ internal sealed class ScriptParameterForm : FormContent
         {
             var obj = JsonNode.Parse(payload)?.AsObject();
             if (obj is null) return CommandResult.Dismiss();
-
-            System.Diagnostics.Debug.WriteLine($"[ScriptParameterForm] Payload: {obj.ToJsonString()}");
 
             var verb = obj["verb"]?.ToString();
             if (string.Equals(verb, "cancel", StringComparison.OrdinalIgnoreCase))
@@ -95,23 +92,15 @@ internal sealed class ScriptParameterForm : FormContent
                 return CommandResult.ShowToast("Script timed out");
 
             if (result.ExitCode != 0)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ScriptParameterForm] Script failed with exit code {result.ExitCode}");
-                if (!string.IsNullOrEmpty(result.StandardError))
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ScriptParameterForm] Error: {result.StandardError}");
-                }
                 return CommandResult.ShowToast($"Script failed with exit code {result.ExitCode}");
-            }
 
             // Return captured output or success message
             return !string.IsNullOrEmpty(result.StandardOutput)
                 ? CommandResult.ShowToast(result.StandardOutput)
                 : CommandResult.ShowToast("Script completed");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            System.Diagnostics.Debug.WriteLine($"[ScriptParameterForm] Exception in SubmitForm: {ex.Message}");
             return CommandResult.GoBack();
         }
     }
