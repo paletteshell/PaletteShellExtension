@@ -21,6 +21,5 @@ public sealed class ScriptManifest
     public string? Cwd { get; set; }
     public string? Mutex { get; set; }
 
-    public string Output { get; set; } = "None";          // None|Clipboard|Markdown|Toast
-    public string OutputAction { get; set; } = "None";    // None|OpenPath
+    public string Output { get; set; } = "None";          // None|Clipboard|Toast
 }

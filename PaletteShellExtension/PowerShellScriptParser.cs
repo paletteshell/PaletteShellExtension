@@ -13,23 +13,30 @@ internal static class PowerShellScriptParser
     public static ScriptManifest? TryParseManifest(string ps1Path)
     {
         if (!File.Exists(ps1Path))
+        {
             return null;
+        }
 
         try
         {
             var scriptContent = File.ReadAllText(ps1Path, Encoding.UTF8);
+
             var ast = Parser.ParseInput(scriptContent, out _, out var errors);
 
             // Only proceed if there are no critical parsing errors
             if (errors.Any(e => !e.IncompleteInput))
+            {
                 return null;
+            }
 
             var paramBlock = ast.Find(a => a is ParamBlockAst, true) as ParamBlockAst;
             var helpContent = ast.GetHelpContent();
 
+            var title = helpContent?.Synopsis ?? Path.GetFileNameWithoutExtension(ps1Path);
+
             var manifest = new ScriptManifest
             {
-                Title = helpContent?.Synopsis ?? Path.GetFileNameWithoutExtension(ps1Path),
+                Title = title,
                 Description = helpContent?.Description,
                 Parameters = []
             };
@@ -63,7 +70,7 @@ internal static class PowerShellScriptParser
 
             return manifest;
         }
-        catch
+        catch (Exception)
         {
             return null;
         }
@@ -71,11 +78,20 @@ internal static class PowerShellScriptParser
 
     public static string? ExpandPathTokens(string? path, string scriptPath)
     {
-        if (string.IsNullOrWhiteSpace(path)) return path;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
         var scriptDir = Path.GetDirectoryName(scriptPath) ?? "";
-        return path.Replace("{ScriptDir}", scriptDir)
-                   .Replace("{Home}", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))
-                   .Replace("{Temp}", Path.GetTempPath());
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var temp = Path.GetTempPath();
+
+        var expanded = path.Replace("{ScriptDir}", scriptDir)
+                          .Replace("{Home}", home)
+                          .Replace("{Temp}", temp);
+
+        return expanded;
     }
 
     private static bool ParseScriptAttribute(AttributeAst attr, ScriptManifest manifest)
@@ -106,10 +122,6 @@ internal static class PowerShellScriptParser
 
             case "ScriptOutput" when TryGetStringArgument(attr, 0, out var output):
                 manifest.Output = output;
-                return true;
-
-            case "ScriptOutputAction" when TryGetStringArgument(attr, 0, out var action):
-                manifest.OutputAction = action;
                 return true;
 
             case "ScriptIcon" when TryGetStringArgument(attr, 0, out var icon):
@@ -143,32 +155,6 @@ internal static class PowerShellScriptParser
 
         var strValue = attr.PositionalArguments[index].SafeGetValue()?.ToString();
         return int.TryParse(strValue, out value);
-    }
-
-    private static bool TryGetStringArrayArgument(AttributeAst attr, int index, out string[] value)
-    {
-        value = [];
-        if (attr.PositionalArguments is null || attr.PositionalArguments.Count <= index)
-            return false;
-
-        var arg = attr.PositionalArguments[index];
-        if (arg is ArrayLiteralAst arrayAst)
-        {
-            value = arrayAst.Elements
-                .Select(e => e.SafeGetValue()?.ToString())
-                .Where(s => s is not null)
-                .ToArray()!;
-            return value.Length > 0;
-        }
-
-        var singleValue = arg.SafeGetValue()?.ToString();
-        if (singleValue is not null)
-        {
-            value = [singleValue];
-            return true;
-        }
-
-        return false;
     }
 
     private static ScriptParameter ParseParameter(ParameterAst paramAst, CommentHelpInfo? helpContent)

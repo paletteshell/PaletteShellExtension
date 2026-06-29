@@ -17,9 +17,9 @@ internal static class ScriptRunner
 
     public static string ResolveShell(string? host)
     {
-        if (string.Equals(host, "powershell", StringComparison.OrdinalIgnoreCase))
-            return "powershell.exe";
-        return "pwsh.exe";
+        return string.Equals(host, "powershell", StringComparison.OrdinalIgnoreCase)
+            ? "powershell.exe"
+            : "pwsh.exe";
     }
 
     public static ProcessStartInfo BuildProcessStartInfo(
@@ -67,12 +67,16 @@ internal static class ScriptRunner
         }
 
         if (!string.IsNullOrWhiteSpace(cwd))
+        {
             psi.WorkingDirectory = cwd;
+        }
 
-        if (env is not null)
+        if (env is not null && env.Count > 0)
         {
             foreach (var kv in env)
+            {
                 psi.Environment[kv.Key] = kv.Value;
+            }
         }
 
         // Elevation vs. output capture
@@ -109,9 +113,8 @@ internal static class ScriptRunner
             var psi = BuildProcessStartInfo(scriptPath, args, host, cwd, env);
             return Process.Start(psi);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Debug.WriteLine($"[ScriptRunner] Error running script: {ex.Message}");
             return null;
         }
     }
@@ -126,6 +129,7 @@ internal static class ScriptRunner
         int? timeoutMs = null)
     {
         Process? proc = null;
+
         try
         {
             var psi = BuildProcessStartInfo(
@@ -138,9 +142,9 @@ internal static class ScriptRunner
                 captureOutput: !requiresAdmin);
 
             proc = Process.Start(psi);
+
             if (proc == null)
             {
-                Debug.WriteLine("[ScriptRunner] Process.Start returned null");
                 return null;
             }
 
@@ -153,18 +157,18 @@ internal static class ScriptRunner
                 {
                     result.StandardOutput = proc.StandardOutput?.ReadToEnd();
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    Debug.WriteLine($"[ScriptRunner] Error reading stdout: {ex.Message}");
+                    // Ignore failures reading stdout.
                 }
 
                 try
                 {
                     result.StandardError = proc.StandardError?.ReadToEnd();
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    Debug.WriteLine($"[ScriptRunner] Error reading stderr: {ex.Message}");
+                    // Ignore failures reading stderr.
                 }
             }
 
@@ -174,7 +178,11 @@ internal static class ScriptRunner
                 if (!proc.WaitForExit(timeoutMs.Value))
                 {
                     result.TimedOut = true;
-                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    try { proc.Kill(entireProcessTree: true); }
+                    catch (Exception)
+                    {
+                        // Ignore failures killing the process tree.
+                    }
                     return result;
                 }
                 // Call WaitForExit() again to ensure async I/O completion
@@ -188,9 +196,8 @@ internal static class ScriptRunner
             result.ExitCode = proc.ExitCode;
             return result;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Debug.WriteLine($"[ScriptRunner] Error in RunScriptAndWait: {ex.Message}");
             return null;
         }
         finally
