@@ -16,7 +16,13 @@
     
     <AppxPackageIdentityName>phireForge.PaletteShell</AppxPackageIdentityName>
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
-    <AppxPackageVersion>0.0.2.0</AppxPackageVersion>
+    <AppxPackageVersion>0.0.3.0</AppxPackageVersion>
+
+    <!-- Trim the self-contained .NET runtime in Release so the packaged extension stays small.
+         Safe now that the reflection-heavy PowerShell SDK is gone; the analyzer keeps future
+         trim hazards visible at build time. -->
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
 
@@ -87,7 +93,6 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="System.Management.Automation" />
     <PackageReference Include="TextCopy" />
   </ItemGroup>
 
