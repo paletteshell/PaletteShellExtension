@@ -13,7 +13,6 @@ namespace PaletteShellExtension;
 public sealed partial class PaletteShellExtension : IExtension, IDisposable
 {
     private readonly ManualResetEvent _extensionDisposedEvent;
-
     private readonly PaletteShellExtensionCommandsProvider _provider = new();
 
     public PaletteShellExtension(ManualResetEvent extensionDisposedEvent)
@@ -30,5 +29,8 @@ public sealed partial class PaletteShellExtension : IExtension, IDisposable
         };
     }
 
-    public void Dispose() => this._extensionDisposedEvent.Set();
+    public void Dispose()
+    {
+        this._extensionDisposedEvent.Set();
+    }
 }
