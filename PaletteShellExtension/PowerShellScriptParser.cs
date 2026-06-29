@@ -1,14 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Management.Automation.Language;
 using System.Text;
+using System.Text.RegularExpressions;
 using PaletteShellExtension.Classes;
 
 namespace PaletteShellExtension;
 
-internal static class PowerShellScriptParser
+/// <summary>
+/// Parses PaletteShell metadata out of a <c>.ps1</c> file: comment-based help
+/// (<c>.SYNOPSIS</c>/<c>.DESCRIPTION</c>/<c>.PARAMETER</c>), the script-level
+/// <c>[Script*]</c> attributes, and the <c>param(...)</c> block.
+/// </summary>
+/// <remarks>
+/// This is a deliberately lightweight text parser. It intentionally does NOT host the
+/// PowerShell engine (<c>System.Management.Automation</c>) — that SDK pulls in ~150
+/// dependency assemblies and roughly tripled the packaged size. Scripts are still
+/// executed by shelling out to <c>pwsh.exe</c>/<c>powershell.exe</c>; this only needs to
+/// read the metadata, which follows a regular, well-known shape.
+/// </remarks>
+internal static partial class PowerShellScriptParser
 {
     public static ScriptManifest? TryParseManifest(string ps1Path)
     {
@@ -19,52 +32,63 @@ internal static class PowerShellScriptParser
 
         try
         {
-            var scriptContent = File.ReadAllText(ps1Path, Encoding.UTF8);
+            var content = File.ReadAllText(ps1Path, Encoding.UTF8);
 
-            var ast = Parser.ParseInput(scriptContent, out _, out var errors);
-
-            // Only proceed if there are no critical parsing errors
-            if (errors.Any(e => !e.IncompleteInput))
-            {
-                return null;
-            }
-
-            var paramBlock = ast.Find(a => a is ParamBlockAst, true) as ParamBlockAst;
-            var helpContent = ast.GetHelpContent();
-
-            var title = helpContent?.Synopsis ?? Path.GetFileNameWithoutExtension(ps1Path);
+            var help = ParseCommentHelp(content);
 
             var manifest = new ScriptManifest
             {
-                Title = title,
-                Description = helpContent?.Description,
+                Title = string.IsNullOrWhiteSpace(help.Synopsis)
+                    ? Path.GetFileNameWithoutExtension(ps1Path)
+                    : help.Synopsis!,
+                Description = help.Description,
                 Parameters = []
             };
 
-            // Parse script-level attributes (metadata)
-            var scriptBlockAst = ast.Find(a => a is ScriptBlockAst, true) as ScriptBlockAst;
-            if (scriptBlockAst?.ParamBlock?.Attributes is not null)
+            // Strip comments so structural parsing isn't confused by help text or
+            // per-parameter line comments, then locate the param(...) block.
+            var cleaned = RemoveComments(content);
+            var paramKeyword = ParamKeywordRegex().Match(cleaned);
+
+            string attributeZone;
+            string? paramBlock = null;
+            if (paramKeyword.Success)
             {
-                foreach (var attr in scriptBlockAst.ParamBlock.Attributes.OfType<AttributeAst>())
+                var openParen = cleaned.IndexOf('(', paramKeyword.Index);
+                if (openParen >= 0)
                 {
-                    ParseScriptAttribute(attr, manifest);
+                    paramBlock = ExtractBalanced(cleaned, openParen, '(', ')');
                 }
+                attributeZone = cleaned[..paramKeyword.Index];
+            }
+            else
+            {
+                attributeZone = cleaned;
             }
 
-            // Check for #Requires -RunAsAdministrator
-            var requiresAdmin = scriptContent.Contains("#Requires -RunAsAdministrator", StringComparison.OrdinalIgnoreCase);
-            if (requiresAdmin)
+            // Script-level [Script*] attributes live before the param keyword.
+            ParseScriptAttributes(attributeZone, manifest);
+
+            // #Requires -RunAsAdministrator (checked against the raw text; the line is a comment)
+            if (content.Contains("#Requires -RunAsAdministrator", StringComparison.OrdinalIgnoreCase))
             {
                 manifest.RequiresAdmin = true;
             }
 
-            // Parse parameters from param block
-            if (paramBlock?.Parameters is not null)
+            if (paramBlock is not null)
             {
-                foreach (var param in paramBlock.Parameters)
+                foreach (var chunk in SplitTopLevel(paramBlock, ','))
                 {
-                    var scriptParam = ParseParameter(param, helpContent);
-                    manifest.Parameters.Add(scriptParam);
+                    if (string.IsNullOrWhiteSpace(chunk))
+                    {
+                        continue;
+                    }
+
+                    var parameter = ParseParameter(chunk, help);
+                    if (parameter is not null)
+                    {
+                        manifest.Parameters.Add(parameter);
+                    }
                 }
             }
 
@@ -87,245 +111,548 @@ internal static class PowerShellScriptParser
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var temp = Path.GetTempPath();
 
-        var expanded = path.Replace("{ScriptDir}", scriptDir)
-                          .Replace("{Home}", home)
-                          .Replace("{Temp}", temp);
-
-        return expanded;
+        return path.Replace("{ScriptDir}", scriptDir)
+                   .Replace("{Home}", home)
+                   .Replace("{Temp}", temp);
     }
 
-    private static bool ParseScriptAttribute(AttributeAst attr, ScriptManifest manifest)
+    // ----- Comment-based help -----------------------------------------------------------
+
+    private sealed class HelpInfo
     {
-        var typeName = attr.TypeName.Name;
+        public string? Synopsis { get; set; }
+        public string? Description { get; set; }
+        public Dictionary<string, string> Parameters { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
 
-        switch (typeName)
+    private static HelpInfo ParseCommentHelp(string content)
+    {
+        var info = new HelpInfo();
+
+        var block = CommentBlockRegex().Match(content);
+        if (!block.Success)
         {
-            case "ScriptHost" when TryGetStringArgument(attr, 0, out var host):
-                manifest.Host = host;
-                return true;
-
-            case "ScriptCwd" when TryGetStringArgument(attr, 0, out var cwd):
-                manifest.Cwd = cwd;
-                return true;
-
-            case "RequiresElevation":
-                manifest.RequiresAdmin = true;
-                return true;
-
-            case "ScriptTimeout" when TryGetIntArgument(attr, 0, out var timeout):
-                manifest.TimeoutMs = timeout;
-                return true;
-
-            case "ScriptMutex" when TryGetStringArgument(attr, 0, out var mutex):
-                manifest.Mutex = mutex;
-                return true;
-
-            case "ScriptOutput" when TryGetStringArgument(attr, 0, out var output):
-                manifest.Output = output;
-                return true;
-
-            case "ScriptIcon" when TryGetStringArgument(attr, 0, out var icon):
-                manifest.IconGlyph = icon;
-                return true;
-
-            case "ScriptEnv" when TryGetStringArgument(attr, 0, out var envName) && TryGetStringArgument(attr, 1, out var envValue):
-                manifest.Env[envName] = envValue;
-                return true;
-
-            default:
-                return false;
+            return info;
         }
-    }
 
-    private static bool TryGetStringArgument(AttributeAst attr, int index, out string? value)
-    {
-        value = null;
-        if (attr.PositionalArguments is null || attr.PositionalArguments.Count <= index)
-            return false;
+        var lines = block.Groups[1].Value.Replace("\r\n", "\n").Split('\n');
 
-        value = attr.PositionalArguments[index].SafeGetValue()?.ToString();
-        return value is not null;
-    }
+        string? section = null; // "SYNOPSIS" | "DESCRIPTION" | "PARAMETER:<name>" | null
+        var buffer = new StringBuilder();
 
-    private static bool TryGetIntArgument(AttributeAst attr, int index, out int value)
-    {
-        value = 0;
-        if (attr.PositionalArguments is null || attr.PositionalArguments.Count <= index)
-            return false;
-
-        var strValue = attr.PositionalArguments[index].SafeGetValue()?.ToString();
-        return int.TryParse(strValue, out value);
-    }
-
-    private static ScriptParameter ParseParameter(ParameterAst paramAst, CommentHelpInfo? helpContent)
-    {
-        var paramName = paramAst.Name.VariablePath.UserPath;
-        
-        // Find [Parameter(...)] attribute
-        var paramAttribute = paramAst.Attributes
-            .OfType<AttributeAst>()
-            .FirstOrDefault(a => a.TypeName.Name == "Parameter");
-
-        bool isMandatory = false;
-        string? helpMessage = null;
-
-        if (paramAttribute?.NamedArguments is not null)
+        void Flush()
         {
-            foreach (var namedArg in paramAttribute.NamedArguments)
+            if (section is not null)
             {
-                if (namedArg.ArgumentName.Equals("Mandatory", StringComparison.OrdinalIgnoreCase))
+                var text = buffer.ToString().Trim();
+                if (text.Length > 0)
                 {
-                    isMandatory = namedArg.Argument.SafeGetValue()?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) ?? false;
+                    if (section == "SYNOPSIS")
+                    {
+                        info.Synopsis = text;
+                    }
+                    else if (section == "DESCRIPTION")
+                    {
+                        info.Description = text;
+                    }
+                    else if (section.StartsWith("PARAMETER:", StringComparison.Ordinal))
+                    {
+                        info.Parameters[section["PARAMETER:".Length..]] = text;
+                    }
                 }
-                else if (namedArg.ArgumentName.Equals("HelpMessage", StringComparison.OrdinalIgnoreCase))
+            }
+
+            buffer.Clear();
+        }
+
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            var key = HelpKeyRegex().Match(line);
+            if (key.Success)
+            {
+                Flush();
+                var keyword = key.Groups["k"].Value.ToUpperInvariant();
+                var arg = key.Groups["a"].Value.Trim();
+                section = keyword switch
                 {
-                    helpMessage = namedArg.Argument.SafeGetValue()?.ToString();
+                    "SYNOPSIS" => "SYNOPSIS",
+                    "DESCRIPTION" => "DESCRIPTION",
+                    "PARAMETER" when arg.Length > 0 => "PARAMETER:" + arg,
+                    _ => null
+                };
+                continue;
+            }
+
+            if (section is not null && line.Length > 0)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Append(' ');
                 }
+                buffer.Append(line);
             }
         }
 
-        // Get description from comment-based help
-        string? paramHelp = null;
-        if (helpContent?.Parameters is not null && helpContent.Parameters.ContainsKey(paramName))
+        Flush();
+        return info;
+    }
+
+    // ----- Script-level attributes ------------------------------------------------------
+
+    private static void ParseScriptAttributes(string zone, ScriptManifest manifest)
+    {
+        foreach (var group in FindBracketGroups(zone))
         {
-            paramHelp = helpContent.Parameters[paramName];
+            var (name, args) = SplitNameArgs(group);
+            var values = args is null
+                ? new List<string>()
+                : SplitTopLevel(args, ',').Select(StripQuotes).ToList();
+
+            switch (name)
+            {
+                case "ScriptHost" when values.Count >= 1:
+                    manifest.Host = values[0];
+                    break;
+                case "ScriptCwd" when values.Count >= 1:
+                    manifest.Cwd = values[0];
+                    break;
+                case "RequiresElevation":
+                    manifest.RequiresAdmin = true;
+                    break;
+                case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
+                    manifest.TimeoutMs = timeout;
+                    break;
+                case "ScriptMutex" when values.Count >= 1:
+                    manifest.Mutex = values[0];
+                    break;
+                case "ScriptOutput" when values.Count >= 1:
+                    manifest.Output = values[0];
+                    break;
+                case "ScriptIcon" when values.Count >= 1:
+                    manifest.IconGlyph = values[0];
+                    break;
+                case "ScriptEnv" when values.Count >= 2:
+                    manifest.Env[values[0]] = values[1];
+                    break;
+            }
+        }
+    }
+
+    // ----- Parameters -------------------------------------------------------------------
+
+    private static ScriptParameter? ParseParameter(string chunk, HelpInfo help)
+    {
+        // Variable name and default value live after the last attribute bracket.
+        var lastBracket = LastTopLevelCloseBracket(chunk);
+        var tail = lastBracket >= 0 ? chunk[(lastBracket + 1)..] : chunk;
+
+        var nameMatch = VariableRegex().Match(tail);
+        if (!nameMatch.Success)
+        {
+            return null;
+        }
+        var name = nameMatch.Groups["n"].Value;
+
+        var equals = tail.IndexOf('=', nameMatch.Index + nameMatch.Length);
+        var defaultExpr = equals >= 0 ? tail[(equals + 1)..].Trim() : null;
+
+        bool mandatory = false;
+        string? helpMessage = null;
+        List<string>? options = null;
+        double? min = null;
+        double? max = null;
+        string? typeName = null;
+
+        foreach (var group in FindBracketGroups(chunk))
+        {
+            var (attrName, args) = SplitNameArgs(group);
+            switch (attrName)
+            {
+                case "Parameter" when args is not null:
+                    foreach (var arg in SplitTopLevel(args, ','))
+                    {
+                        var a = arg.Trim();
+                        if (a.StartsWith("Mandatory", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var eq = a.IndexOf('=');
+                            mandatory = eq < 0
+                                || a[(eq + 1)..].Trim().TrimStart('$').Equals("true", StringComparison.OrdinalIgnoreCase);
+                        }
+                        else if (a.StartsWith("HelpMessage", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var eq = a.IndexOf('=');
+                            if (eq >= 0)
+                            {
+                                helpMessage = StripQuotes(a[(eq + 1)..]);
+                            }
+                        }
+                    }
+                    break;
+
+                case "ValidateSet" when args is not null:
+                    var opts = SplitTopLevel(args, ',')
+                        .Select(StripQuotes)
+                        .Where(o => !string.IsNullOrWhiteSpace(o))
+                        .ToList();
+                    if (opts.Count > 0)
+                    {
+                        options = opts;
+                    }
+                    break;
+
+                case "ValidateRange" when args is not null:
+                    var bounds = SplitTopLevel(args, ',').Select(b => b.Trim()).ToList();
+                    if (bounds.Count >= 2)
+                    {
+                        if (double.TryParse(bounds[0], NumberStyles.Any, CultureInfo.InvariantCulture, out var lo))
+                        {
+                            min = lo;
+                        }
+                        if (double.TryParse(bounds[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var hi))
+                        {
+                            max = hi;
+                        }
+                    }
+                    break;
+
+                default:
+                    // A bracket with no arguments that isn't a known attribute is the type
+                    // constraint (e.g. [string], [int], [switch]); the one nearest the
+                    // variable wins.
+                    if (args is null && !KnownAttributes.Contains(attrName))
+                    {
+                        typeName = attrName;
+                    }
+                    break;
+            }
         }
 
-        // Determine type from AST
-        var psType = DeterminePowerShellType(paramAst);
-        var uiType = MapPowerShellTypeToUiType(psType, paramAst);
+        var uiType = MapType(typeName ?? "string", options is not null);
 
-        // Get default value
-        object? defaultValue = null;
-        if (paramAst.DefaultValue is not null)
+        object? defaultValue = string.IsNullOrEmpty(defaultExpr)
+            ? null
+            : InterpretDefault(defaultExpr!, uiType);
+
+        var paramHelp = help.Parameters.TryGetValue(name, out var ph) ? ph : null;
+
+        return new ScriptParameter
         {
-            defaultValue = TryGetDefaultValue(paramAst.DefaultValue);
-        }
-
-        // Extract validation attributes for enums, ranges, etc.
-        var (options, min, max) = ExtractValidationInfo(paramAst);
-
-        var scriptParam = new ScriptParameter
-        {
-            Name = paramName,
+            Name = name,
             Type = uiType,
-            Label = helpMessage ?? paramHelp ?? paramName,
+            Label = helpMessage ?? paramHelp ?? name,
             Default = defaultValue,
-            Required = isMandatory ? true : null,
+            Required = mandatory ? true : null,
             Options = options,
             Min = min,
             Max = max
         };
-
-        return scriptParam;
     }
 
-    private static string DeterminePowerShellType(ParameterAst paramAst)
+    private static string MapType(string psType, bool hasValidateSet)
     {
-        // Check for explicit type constraint
-        var typeConstraint = paramAst.Attributes
-            .OfType<TypeConstraintAst>()
-            .FirstOrDefault();
-
-        if (typeConstraint is not null)
+        if (hasValidateSet)
         {
-            var typeName = typeConstraint.TypeName.Name;
-            return typeName;
-        }
-
-        // Check if it's a switch
-        if (paramAst.Attributes.Any(a => a is AttributeAst attr && attr.TypeName.Name == "switch"))
-            return "switch";
-
-        return "string"; // Default to string
-    }
-
-    private static string MapPowerShellTypeToUiType(string psType, ParameterAst paramAst)
-    {
-        // Check for ValidateSet first (indicates enum)
-        var validateSet = paramAst.Attributes
-            .OfType<AttributeAst>()
-            .FirstOrDefault(a => a.TypeName.Name == "ValidateSet");
-        
-        if (validateSet is not null)
             return "enum";
+        }
 
         return psType.ToLowerInvariant() switch
         {
             "switch" or "bool" or "boolean" => "bool",
             "int" or "int32" or "int64" or "long" => "int",
-            "double" or "float" or "decimal" => "number",
-            "string" => "string",
+            "double" or "float" or "single" or "decimal" => "number",
             _ => "string"
         };
     }
 
-    private static object? TryGetDefaultValue(ExpressionAst expr)
+    private static object? InterpretDefault(string expr, string uiType)
     {
-        try
+        expr = expr.Trim();
+
+        if (expr.Equals("$null", StringComparison.OrdinalIgnoreCase))
         {
-            return expr.SafeGetValue();
+            return null;
         }
-        catch
+
+        var isTrue = expr.Equals("$true", StringComparison.OrdinalIgnoreCase) || expr.Equals("true", StringComparison.OrdinalIgnoreCase);
+        var isFalse = expr.Equals("$false", StringComparison.OrdinalIgnoreCase) || expr.Equals("false", StringComparison.OrdinalIgnoreCase);
+
+        switch (uiType)
         {
-            // If we can't get the value, try to extract the text representation
-            return expr.Extent.Text.Trim('"', '\'');
+            case "bool":
+                return isTrue;
+            case "int":
+                var i = StripQuotes(expr);
+                return int.TryParse(i, NumberStyles.Any, CultureInfo.InvariantCulture, out var iv) ? iv : i;
+            case "number":
+                var n = StripQuotes(expr);
+                return double.TryParse(n, NumberStyles.Any, CultureInfo.InvariantCulture, out var dv) ? dv : n;
+            default:
+                if (isTrue)
+                {
+                    return true;
+                }
+                if (isFalse)
+                {
+                    return false;
+                }
+                return StripQuotes(expr);
         }
     }
 
-    private static (List<string>? options, double? min, double? max) ExtractValidationInfo(ParameterAst paramAst)
+    // ----- Low-level text helpers -------------------------------------------------------
+
+    private static readonly HashSet<string> KnownAttributes = new(StringComparer.OrdinalIgnoreCase)
     {
-        List<string>? options = null;
-        double? min = null;
-        double? max = null;
+        "Parameter", "ValidateSet", "ValidateRange", "ValidatePattern", "ValidateLength",
+        "ValidateCount", "ValidateNotNull", "ValidateNotNullOrEmpty", "ValidateScript",
+        "ValidateDrive", "ValidateUserDrive", "AllowNull", "AllowEmptyString",
+        "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
+        "PSDefaultValue", "ArgumentCompleter",
+        "ScriptHost", "ScriptCwd", "RequiresElevation", "ScriptTimeout", "ScriptMutex",
+        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptEnv"
+    };
 
-        foreach (var attr in paramAst.Attributes.OfType<AttributeAst>())
+    /// <summary>Removes <c>&lt;# ... #&gt;</c> blocks and whole-line <c>#</c> comments.</summary>
+    private static string RemoveComments(string content)
+    {
+        var withoutBlocks = CommentBlockRegex().Replace(content, "");
+
+        var builder = new StringBuilder();
+        foreach (var line in withoutBlocks.Replace("\r\n", "\n").Split('\n'))
         {
-            switch (attr.TypeName.Name)
+            if (line.TrimStart().StartsWith('#'))
             {
-                case "ValidateSet":
-                    options = ExtractValidateSetOptions(attr);
-                    break;
+                continue;
+            }
+            builder.Append(line).Append('\n');
+        }
+        return builder.ToString();
+    }
 
-                case "ValidateRange":
-                    (min, max) = ExtractValidateRange(attr);
+    /// <summary>Returns the inner text of each top-level <c>[...]</c> group, quote-aware.</summary>
+    private static List<string> FindBracketGroups(string s)
+    {
+        var groups = new List<string>();
+        int depth = 0;
+        int start = -1;
+        char quote = '\0';
+
+        for (int i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            switch (c)
+            {
+                case '\'' or '"':
+                    quote = c;
+                    break;
+                case '[':
+                    if (depth == 0)
+                    {
+                        start = i + 1;
+                    }
+                    depth++;
+                    break;
+                case ']':
+                    if (depth > 0)
+                    {
+                        depth--;
+                        if (depth == 0 && start >= 0)
+                        {
+                            groups.Add(s[start..i]);
+                            start = -1;
+                        }
+                    }
                     break;
             }
         }
 
-        return (options, min, max);
+        return groups;
     }
 
-    private static List<string>? ExtractValidateSetOptions(AttributeAst attr)
+    private static int LastTopLevelCloseBracket(string s)
     {
-        if (attr.PositionalArguments is null || attr.PositionalArguments.Count == 0)
-            return null;
+        int depth = 0;
+        int last = -1;
+        char quote = '\0';
 
-        var options = new List<string>();
-        foreach (var arg in attr.PositionalArguments)
+        for (int i = 0; i < s.Length; i++)
         {
-            var value = arg.SafeGetValue()?.ToString();
-            if (!string.IsNullOrWhiteSpace(value))
-                options.Add(value);
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            if (c is '\'' or '"')
+            {
+                quote = c;
+            }
+            else if (c == '[')
+            {
+                depth++;
+            }
+            else if (c == ']' && depth > 0)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    last = i;
+                }
+            }
         }
 
-        return options.Count > 0 ? options : null;
+        return last;
     }
 
-    private static (double? min, double? max) ExtractValidateRange(AttributeAst attr)
+    /// <summary>Splits on <paramref name="separator"/> at the top level, ignoring separators
+    /// nested inside <c>() [] {}</c> or quotes.</summary>
+    private static IEnumerable<string> SplitTopLevel(string s, char separator)
     {
-        if (attr.PositionalArguments is null || attr.PositionalArguments.Count < 2)
-            return (null, null);
+        int paren = 0, bracket = 0, brace = 0;
+        char quote = '\0';
+        int start = 0;
 
-        double? min = null;
-        double? max = null;
+        for (int i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
 
-        if (double.TryParse(attr.PositionalArguments[0].SafeGetValue()?.ToString(), out var minVal))
-            min = minVal;
+            if (c is '\'' or '"')
+            {
+                quote = c;
+            }
+            else if (c == '(')
+            {
+                paren++;
+            }
+            else if (c == ')' && paren > 0)
+            {
+                paren--;
+            }
+            else if (c == '[')
+            {
+                bracket++;
+            }
+            else if (c == ']' && bracket > 0)
+            {
+                bracket--;
+            }
+            else if (c == '{')
+            {
+                brace++;
+            }
+            else if (c == '}' && brace > 0)
+            {
+                brace--;
+            }
+            else if (c == separator && paren == 0 && bracket == 0 && brace == 0)
+            {
+                yield return s[start..i];
+                start = i + 1;
+            }
+        }
 
-        if (double.TryParse(attr.PositionalArguments[1].SafeGetValue()?.ToString(), out var maxVal))
-            max = maxVal;
-
-        return (min, max);
+        yield return s[start..];
     }
+
+    /// <summary>Returns the content between the delimiter at <paramref name="openIndex"/> and its
+    /// matching close, or null if unbalanced. Quote-aware.</summary>
+    private static string? ExtractBalanced(string s, int openIndex, char open, char close)
+    {
+        int depth = 0;
+        char quote = '\0';
+
+        for (int i = openIndex; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            if (c is '\'' or '"')
+            {
+                quote = c;
+            }
+            else if (c == open)
+            {
+                depth++;
+            }
+            else if (c == close)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return s[(openIndex + 1)..i];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Splits an attribute body like <c>Parameter(Mandatory=$true)</c> into name and
+    /// argument text; returns null args when there are no parentheses.</summary>
+    private static (string Name, string? Args) SplitNameArgs(string group)
+    {
+        var open = group.IndexOf('(');
+        if (open < 0)
+        {
+            return (group.Trim(), null);
+        }
+
+        var name = group[..open].Trim();
+        var args = ExtractBalanced(group, open, '(', ')');
+        return (name, args);
+    }
+
+    /// <summary>Trims one matching pair of surrounding quotes and unescapes doubled quotes.</summary>
+    private static string StripQuotes(string value)
+    {
+        value = value.Trim();
+        if (value.Length >= 2 && (value[0] == '\'' || value[0] == '"') && value[^1] == value[0])
+        {
+            var q = value[0];
+            value = value[1..^1];
+            value = q == '\'' ? value.Replace("''", "'") : value.Replace("\"\"", "\"");
+        }
+        return value;
+    }
+
+    [GeneratedRegex(@"<#(.*?)#>", RegexOptions.Singleline)]
+    private static partial Regex CommentBlockRegex();
+
+    [GeneratedRegex(@"^\.(?<k>[A-Za-z]+)(?:\s+(?<a>\S+))?\s*$")]
+    private static partial Regex HelpKeyRegex();
+
+    [GeneratedRegex(@"\bparam\s*\(", RegexOptions.IgnoreCase)]
+    private static partial Regex ParamKeywordRegex();
+
+    [GeneratedRegex(@"\$\{?(?<n>[A-Za-z_]\w*)\}?")]
+    private static partial Regex VariableRegex();
 }
