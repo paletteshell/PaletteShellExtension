@@ -59,19 +59,8 @@ internal sealed class ScriptParameterForm : FormContent
                 if (string.IsNullOrWhiteSpace(value) && param.Required != true)
                     continue;
 
-                // Add parameter name and value
-                if (param.Type == "bool")
-                {
-                    // For boolean parameters, pass $true or $false
-                    var boolValue = value?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-                    args.Add($"-{param.Name}");
-                    args.Add($"${boolValue.ToString().ToLowerInvariant()}");
-                }
-                else
-                {
-                    args.Add($"-{param.Name}");
-                    args.Add(QuoteIfNeeded(value ?? ""));
-                }
+                args.Add($"-{param.Name}");
+                args.Add(FormatArgValue(param, value ?? ""));
             }
 
             var argsLine = string.Join(" ", args);
@@ -94,7 +83,7 @@ internal sealed class ScriptParameterForm : FormContent
                 return CommandResult.ShowToast("Script timed out");
 
             if (result.ExitCode != 0)
-                return CommandResult.ShowToast($"Script failed with exit code {result.ExitCode}");
+                return CommandResult.ShowToast(ScriptRunner.DescribeFailure(result));
 
             // Markdown output - render the result in place instead of a toast.
             var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
@@ -104,10 +93,8 @@ internal sealed class ScriptParameterForm : FormContent
                 return CommandResult.KeepOpen();
             }
 
-            // Return captured output or success message
-            return !string.IsNullOrEmpty(result.StandardOutput)
-                ? CommandResult.ShowToast(result.StandardOutput)
-                : CommandResult.ShowToast("Script completed");
+            // Clipboard / Toast / None are handled identically to the no-parameter path.
+            return ScriptOutputHandler.ToResult(_manifest.Output, result.StandardOutput);
         }
         catch (Exception)
         {
@@ -235,7 +222,7 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    private static JsonNode? ToJsonValue(object? value) => value switch
+    private static JsonValue? ToJsonValue(object? value) => value switch
     {
         null => null,
         bool b => JsonValue.Create(b),
@@ -264,14 +251,20 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    private static string QuoteIfNeeded(string value)
+    /// <summary>
+    /// Formats a form value as a PowerShell command-line argument. Booleans become
+    /// <c>$true</c>/<c>$false</c>; parameters marked <c>[AllowExpression]</c> are injected
+    /// verbatim so PowerShell evaluates them; everything else is a single-quoted literal so
+    /// <c>$</c>, <c>;</c>, backticks and quotes reach the script intact rather than being evaluated.
+    /// </summary>
+    private static string FormatArgValue(ScriptParameter param, string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-            return "\"\"";
+        if (param.Type == "bool")
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "$true" : "$false";
 
-        if (value.Contains(' ') || value.Contains('"'))
-            return $"\"{value.Replace("\"", "`\"")}\"";
+        if (param.AllowExpression)
+            return value;
 
-        return value;
+        return "'" + value.Replace("'", "''") + "'";
     }
 }
