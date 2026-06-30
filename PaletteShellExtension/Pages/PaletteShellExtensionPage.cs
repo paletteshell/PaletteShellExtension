@@ -142,6 +142,8 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var title = manifest?.Title ?? Path.GetFileNameWithoutExtension(path);
                 var subtitle = manifest?.Description ?? path;
 
+                var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
+
                 ICommand command;
                 if (manifest?.Parameters?.Any() == true)
                 {
@@ -157,6 +159,19 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     );
 
                     command = formPage;
+                }
+                else if (wantsMarkdown && manifest is not null)
+                {
+                    // No parameters, Markdown output - navigate to a page that runs
+                    // the script and renders its stdout as Markdown.
+                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+
+                    command = new ScriptMarkdownPage(
+                        scriptPath: path,
+                        manifest: manifest,
+                        host: manifest.Host ?? "pwsh",
+                        cwd: resolvedCwd,
+                        env: manifest.Env);
                 }
                 else
                 {

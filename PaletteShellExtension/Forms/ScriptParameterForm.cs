@@ -14,20 +14,23 @@ internal sealed class ScriptParameterForm : FormContent
     private readonly string _host;
     private readonly string? _cwd;
     private readonly Dictionary<string, string> _env;
+    private readonly Action<string>? _onMarkdown;
 
     public ScriptParameterForm(
         string scriptPath,
         ScriptManifest manifest,
         string? host = null,
         string? cwd = null,
-        Dictionary<string, string>? env = null)
+        Dictionary<string, string>? env = null,
+        Action<string>? onMarkdown = null)
     {
-        
+
         _scriptPath = scriptPath;
         _manifest = manifest;
         _host = host ?? "pwsh";
         _cwd = cwd;
         _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _onMarkdown = onMarkdown;
 
         TemplateJson = BuildTemplateJson();
         DataJson = BuildDataJson();
@@ -92,6 +95,14 @@ internal sealed class ScriptParameterForm : FormContent
 
             if (result.ExitCode != 0)
                 return CommandResult.ShowToast($"Script failed with exit code {result.ExitCode}");
+
+            // Markdown output - render the result in place instead of a toast.
+            var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
+            if (wantsMarkdown && _onMarkdown is not null)
+            {
+                _onMarkdown(result.StandardOutput ?? "");
+                return CommandResult.KeepOpen();
+            }
 
             // Return captured output or success message
             return !string.IsNullOrEmpty(result.StandardOutput)
