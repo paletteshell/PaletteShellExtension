@@ -16,7 +16,7 @@
     
     <AppxPackageIdentityName>phireForge.PaletteShell</AppxPackageIdentityName>
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
-    <AppxPackageVersion>0.0.3.0</AppxPackageVersion>
+    <AppxPackageVersion>0.0.4.0</AppxPackageVersion>
 
     <!-- Trim the self-contained .NET runtime in Release so the packaged extension stays small.
          Safe now that the reflection-heavy PowerShell SDK is gone; the analyzer keeps future

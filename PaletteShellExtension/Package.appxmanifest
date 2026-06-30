@@ -11,7 +11,7 @@
   <Identity
     Name="phireForge.PaletteShell"
     Publisher="CN=7340D37C-B15E-4DA1-B9DD-9B688A69713D"
-    Version="0.0.3.0" />
+    Version="0.0.4.0" />
   <Properties>
     <DisplayName>PaletteShell</DisplayName>
     <PublisherDisplayName>phireForge</PublisherDisplayName>
