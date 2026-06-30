@@ -10,7 +10,7 @@ namespace PaletteShellExtension.Classes;
 /// </summary>
 internal static class ScriptOutputHandler
 {
-    public static CommandResult ToResult(string? mode, string? output)
+    public static CommandResult ToResult(string? mode, string? output, string? fileExtension = null, string? fileBaseName = null)
     {
         switch (mode?.Trim().ToLowerInvariant())
         {
@@ -19,6 +19,16 @@ internal static class ScriptOutputHandler
                 {
                     TrySetClipboard(output);
                     return CommandResult.ShowToast("Copied to clipboard");
+                }
+                return CommandResult.ShowToast("Script completed");
+
+            // Write stdout to a temp file and open it in the user's editor. Useful for
+            // output that's too large or structured to be readable in a toast.
+            case "file":
+                if (!string.IsNullOrEmpty(output))
+                {
+                    EditorLauncher.OpenContent(output, fileExtension, fileBaseName);
+                    return CommandResult.ShowToast("Opened output in editor");
                 }
                 return CommandResult.ShowToast("Script completed");
 

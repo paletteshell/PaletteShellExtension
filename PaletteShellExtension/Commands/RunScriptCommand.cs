@@ -74,7 +74,11 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         // Elevated scripts can't have their output captured, so suppress output handling.
         var output = !wantsAdmin ? result.StandardOutput : null;
 
-        return ScriptOutputHandler.ToResult(_manifest.Output, output);
+        return ScriptOutputHandler.ToResult(
+            _manifest.Output,
+            output,
+            _manifest.FileExtension,
+            Path.GetFileNameWithoutExtension(path));
     }
 
     private static string? ExpandPathTokens(string? path, string scriptPath)

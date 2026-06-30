@@ -69,10 +69,11 @@ Whether PaletteShell waits for the script depends on its output mode and timeout
 | Condition | Behavior |
 |-----------|----------|
 | `[ScriptOutput('None')]` and no `[ScriptTimeout]` | Fire-and-forget — the process is started and a "Script completed" toast is shown. |
-| Any other output mode (`Toast`/`Clipboard`/`Markdown`) | PaletteShell waits (up to the declared timeout, or a 30s default), captures stdout/stderr, and surfaces the result. |
+| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`File`) | PaletteShell waits (up to the declared timeout, or a 30s default), captures stdout/stderr, and surfaces the result. |
 | `[ScriptTimeout(ms)]` set | PaletteShell waits up to `ms`, then kills the process tree on timeout. |
 | `[ScriptOutput('Clipboard')]` | Captured output is copied to the clipboard. |
 | `[ScriptOutput('Markdown')]` | Captured output is rendered as Markdown on its own page. |
+| `[ScriptOutput('File')]` | Captured output is written to a temp file and opened in your editor. |
 | `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode. |
 
 ### Cross-platform clipboard
@@ -145,6 +146,13 @@ Set-ClipboardText $result
 - **Clipboard** — copy captured output to the clipboard
 - **Toast** — show the captured output in a Windows notification
 - **Markdown** — run the script and render its output as formatted Markdown on its own page
+- **File** — write captured output to a temp file and open it in your editor (`$VISUAL`/`$EDITOR`, else Notepad). Best for large or structured output that's unwieldy in a toast. Append an extension hint after a colon to control the file type:
+
+  ```powershell
+  [ScriptOutput('File')]        # → %TEMP%\PaletteShell\<name>-<ts>.txt, opened in editor
+  [ScriptOutput('File:csv')]    # → .csv, so it opens in Excel
+  [ScriptOutput('File:json')]   # → .json, for syntax-highlighted JSON
+  ```
 
 ### Parameter Form Mapping
 
@@ -183,6 +191,7 @@ The extension ships with ready-to-use scripts that double as working examples:
 | `Generate-GUID` | Generate a new GUID and copy it to the clipboard |
 | `Clipboard-UnixTimestamp` | Insert/convert a Unix timestamp |
 | `System-Report` | Render a system information report (demonstrates Markdown output) |
+| `Export-ProcessList` | Snapshot running processes as CSV and open it in Excel (demonstrates File output) |
 
 For more, browse the community library at **[paletteshell/PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)**.
 

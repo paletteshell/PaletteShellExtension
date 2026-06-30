@@ -224,7 +224,19 @@ internal static partial class PowerShellScriptParser
                     manifest.TimeoutMs = timeout;
                     break;
                 case "ScriptOutput" when values.Count >= 1:
-                    manifest.Output = values[0];
+                    // The mode may carry an extension hint for File mode after a colon,
+                    // e.g. 'File:csv' opens the temp file as .csv.
+                    var outputSpec = values[0];
+                    var colon = outputSpec.IndexOf(':');
+                    if (colon >= 0)
+                    {
+                        manifest.Output = outputSpec[..colon].Trim();
+                        manifest.FileExtension = outputSpec[(colon + 1)..].Trim();
+                    }
+                    else
+                    {
+                        manifest.Output = outputSpec;
+                    }
                     break;
                 case "ScriptGroup" when values.Count >= 1:
                     manifest.Group = values[0];

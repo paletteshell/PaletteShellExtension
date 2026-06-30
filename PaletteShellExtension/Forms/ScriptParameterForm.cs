@@ -93,8 +93,12 @@ internal sealed class ScriptParameterForm : FormContent
                 return CommandResult.KeepOpen();
             }
 
-            // Clipboard / Toast / None are handled identically to the no-parameter path.
-            return ScriptOutputHandler.ToResult(_manifest.Output, result.StandardOutput);
+            // Clipboard / File / Toast / None are handled identically to the no-parameter path.
+            return ScriptOutputHandler.ToResult(
+                _manifest.Output,
+                result.StandardOutput,
+                _manifest.FileExtension,
+                System.IO.Path.GetFileNameWithoutExtension(_scriptPath));
         }
         catch (Exception)
         {

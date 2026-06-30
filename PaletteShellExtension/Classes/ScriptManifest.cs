@@ -20,4 +20,8 @@ public sealed class ScriptManifest
     public string? Cwd { get; set; }
 
     public string Output { get; set; } = "None";
+
+    // Extension hint for File output mode (e.g. ".json"), so the temp file opens
+    // with the right syntax highlighting. Ignored by other output modes.
+    public string? FileExtension { get; set; }
 }
