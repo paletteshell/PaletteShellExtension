@@ -12,6 +12,7 @@
 - **📝 Parameter Support**: Scripts with parameters get an interactive input form, generated from the script's own `param()` block
 - **🎨 Rich Metadata**: Organize scripts with icons, descriptions, groups, and tags via PowerShell attributes
 - **📄 Markdown Output**: Render a script's output as formatted Markdown inside the palette
+- **📜 List Output**: Turn a script into a search/pick provider — its stdout becomes a searchable list of items you can copy or open
 - **✏️ Open in Editor**: Jump straight to any script's source in your `$EDITOR`/`$VISUAL` (Notepad by default)
 - **⚡ Cross-Platform PowerShell**: Supports both PowerShell Core (`pwsh`) and Windows PowerShell (`powershell`)
 - **🔒 Security**: Runs in user context with optional admin elevation per script
@@ -56,10 +57,11 @@ For each script, `PowerShellScriptParser` parses the file using the official Pow
 
 ### Running a script
 
-Selecting a script item routes to one of three paths, based on its metadata:
+Selecting a script item routes to one of these paths, based on its metadata:
 
 - **Has parameters** → opens `ScriptParameterFormPage`, an auto-generated form. Once you submit, the collected values are passed to the script.
 - **No parameters, `[ScriptOutput('Markdown')]`** → opens `ScriptMarkdownPage`, which runs the script and renders its stdout as formatted Markdown.
+- **No parameters, `[ScriptOutput('List')]`** → opens `ScriptListPage`, which runs the script and turns its stdout into a searchable list of items (see [List output](#list-output)).
 - **No parameters, any other output mode** → runs the script directly via `RunScriptCommand`.
 
 Execution is handled by `ScriptRunner`, which launches `pwsh.exe` (or `powershell.exe`) with `-STA -NoProfile -ExecutionPolicy Bypass`. When the `PaletteScriptAttributes.psm1` module is present alongside the script, the runner imports it and dot-sources the script so the custom attributes resolve and the helper functions (clipboard, logging) are available; the information stream is redirected to stdout so `Write-Host` output is captured.
@@ -73,6 +75,7 @@ Whether PaletteShell waits for the script depends on its output mode and timeout
 | `[ScriptTimeout(ms)]` set | PaletteShell waits up to `ms`, then kills the process tree on timeout. |
 | `[ScriptOutput('Clipboard')]` | Captured output is copied to the clipboard. |
 | `[ScriptOutput('Markdown')]` | Captured output is rendered as Markdown on its own page. |
+| `[ScriptOutput('List')]` | Captured output is parsed into a searchable list of selectable items on its own page. |
 | `[ScriptOutput('File')]` | Captured output is written to a temp file and opened in your editor. |
 | `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode. |
 
@@ -146,6 +149,7 @@ Set-ClipboardText $result
 - **Clipboard** — copy captured output to the clipboard
 - **Toast** — show the captured output in a Windows notification
 - **Markdown** — run the script and render its output as formatted Markdown on its own page
+- **List** — parse the script's output into a searchable list of selectable items, turning the script into a search/pick provider (see [List output](#list-output))
 - **File** — write captured output to a temp file and open it in your editor (`$VISUAL`/`$EDITOR`, else Notepad). Best for large or structured output that's unwieldy in a toast. Append an extension hint after a colon to control the file type:
 
   ```powershell
@@ -153,6 +157,53 @@ Set-ClipboardText $result
   [ScriptOutput('File:csv')]    # → .csv, so it opens in Excel
   [ScriptOutput('File:json')]   # → .json, for syntax-highlighted JSON
   ```
+
+### List output
+
+`[ScriptOutput('List')]` turns a script into a **search/pick provider**: PaletteShell runs the script, parses its stdout into a list of items, and opens a searchable page where each item can be picked. Picking an item **copies its value**; items that carry a URL also get an **Open** command. This is the power mode — e.g. "list my Git branches → pick one → copy".
+
+PaletteShell parses stdout in one of two shapes:
+
+- **Newline-delimited text** — each non-empty line becomes an item whose title and copy value are that line. Great for simple scripts (`git branch --format='%(refname:short)'`, `Get-ChildItem -Name`, …).
+- **A JSON array** — for richer items. Print a single JSON array (e.g. via `ConvertTo-Json`):
+  - An array of **strings** behaves like the line case (the string is both title and copy value).
+  - An array of **objects** maps these fields (all optional, case-insensitive):
+
+    | Field | Purpose |
+    |-------|---------|
+    | `title` / `name` / `label` / `text` | Item title (also the copy value if `value` is omitted) |
+    | `subtitle` / `description` / `detail` | Secondary line under the title |
+    | `value` / `copy` | The text copied when the item is picked |
+    | `url` / `link` | Adds an **Open** command that launches the URL |
+    | `icon` | Emoji or glyph shown on the item |
+
+#### Static list vs. live provider
+
+Whether the list is fixed or driven by what you type depends on the script's `param()` block:
+
+- **No parameter** → the script runs once and the palette's search box **filters the results locally** (e.g. a fixed list of branches you scroll/filter).
+- **One parameter** → the page becomes a **live provider**: the palette's search text is passed to the script as that parameter and the results **refresh as you type**. Type or paste a value (a folder path, a query, …) and the script re-runs. The parameter's `.PARAMETER` help becomes the search box's placeholder. (Only the first parameter is used; List scripts skip the parameter form.)
+
+  > The script also runs once on open, when the search box is empty, so handle the blank case — return a short prompt item ("Type a path…") rather than guessing a default, so the page invites input instead of showing an error.
+
+```powershell
+# Static list — search filters the lines locally
+[ScriptOutput('List')]
+param()
+git branch --format='%(refname:short)'
+
+# Live provider — whatever you type is passed as -Query and the list refreshes
+<#
+.PARAMETER Query
+    Type a search term…
+#>
+[ScriptOutput('List')]
+param([string]$Query)
+
+@(
+    [pscustomobject]@{ title = "Result for $Query"; subtitle = 'picked → copied'; value = $Query }
+) | ConvertTo-Json -AsArray -Compress
+```
 
 ### Parameter Form Mapping
 
@@ -192,6 +243,7 @@ The extension ships with ready-to-use scripts that double as working examples:
 | `Clipboard-UnixTimestamp` | Insert/convert a Unix timestamp |
 | `System-Report` | Render a system information report (demonstrates Markdown output) |
 | `Export-ProcessList` | Snapshot running processes as CSV and open it in Excel (demonstrates File output) |
+| `Git-Branches` | Type a repo folder path and pick one of its branches to copy (demonstrates List output as a live provider) |
 
 For more, browse the community library at **[paletteshell/PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)**.
 
@@ -227,6 +279,8 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `Commands/OpenInEditorCommand.cs`, `OpenFolderCommand.cs`, `OpenLinkCommand.cs`, `ReloadPageCommand.cs` | Built-in and per-item commands |
 | `Pages/ScriptParameterFormPage.cs`, `Forms/ScriptParameterForm.cs` | Auto-generated input form for parameterized scripts |
 | `Pages/ScriptMarkdownPage.cs` | Runs a script and renders its output as Markdown |
+| `Pages/ScriptListPage.cs` | Runs a script and turns its stdout into a searchable, pickable list |
+| `Commands/CopyValueCommand.cs` | Copies a List item's value to the clipboard when picked |
 | `Pages/NewScriptWizardPage.cs`, `Forms/NewScriptWizardForm.cs` | "Create new script" scaffolding wizard |
 | `PaletteScriptAttributes.psm1` | PowerShell module defining the metadata attributes and clipboard/logging helpers |
 | `SampleScripts/` | Embedded sample scripts copied to the user's scripts folder |

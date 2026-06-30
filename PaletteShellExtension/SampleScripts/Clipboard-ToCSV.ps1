@@ -15,7 +15,7 @@ using module .\PaletteScriptAttributes.psm1
 param()
 
 $text  = Get-ClipboardText
-$lines = $text -split "(\r\n|\n|\r)" | Where-Object { $_ -ne "" }
+$lines = $text -split "\r\n|\n|\r" | Where-Object { $_ -ne "" }
 $csv   = ($lines | ForEach-Object { '"' + ($_ -replace '"','""') + '"' }) -join ','
 Set-ClipboardText $csv
 Write-Host "Converted $($lines.Count) lines to CSV and copied to clipboard"

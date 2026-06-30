@@ -143,9 +143,25 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var subtitle = manifest?.Description ?? path;
 
                 var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
+                var wantsList = string.Equals(manifest?.Output, "List", StringComparison.OrdinalIgnoreCase);
 
                 ICommand command;
-                if (manifest?.Parameters is { Count: > 0 })
+                if (wantsList && manifest is not null)
+                {
+                    // List output - navigate to a page that runs the script and turns its
+                    // stdout into a searchable, pickable list. If the script declares a
+                    // parameter, that page feeds it the palette's search text (it acts as a
+                    // live provider) rather than using the parameter form.
+                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+
+                    command = new ScriptListPage(
+                        scriptPath: path,
+                        manifest: manifest,
+                        host: manifest.Host ?? "pwsh",
+                        cwd: resolvedCwd,
+                        env: manifest.Env);
+                }
+                else if (manifest?.Parameters is { Count: > 0 })
                 {
                     // Script has parameters - navigate to parameter form page
                     var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);

@@ -27,9 +27,11 @@ class ScriptTimeoutAttribute : Attribute {
 
 # Output handling
 class ScriptOutputAttribute : Attribute {
-    # None, Toast, Clipboard, Markdown, or File.
+    # None, Toast, Clipboard, Markdown, File, or List.
     # File writes stdout to a temp file and opens it in the editor; append an
     # extension hint after a colon to control the file type, e.g. 'File:csv' or 'File:json'.
+    # List parses stdout (newline-delimited, or a JSON array) into a searchable
+    # results page where each line/object becomes a selectable item.
     [string]$Mode
     ScriptOutputAttribute([string]$mode) { $this.Mode = $mode }
 }
