@@ -46,17 +46,19 @@ internal sealed partial class NewScriptWizardForm : FormContent
     }
 
 
-    public override CommandResult SubmitForm(string payload)
+    public override CommandResult SubmitForm(string inputs, string data)
     {
-        var formInput = JsonNode.Parse(payload)?.AsObject();
+        // The clicked button's verb is carried in the action's `data`, not in the
+        // input values, so it must be read from the `data` argument.
+        var verb = ParseVerb(data);
+        if (string.Equals(verb, "cancel", StringComparison.OrdinalIgnoreCase))
+            return CommandResult.GoBack();
+
+        var formInput = JsonNode.Parse(inputs)?.AsObject();
         if (formInput == null)
         {
             return CommandResult.GoHome();
         }
-
-        var verb = formInput["verb"]?.ToString();
-        if (string.Equals(verb, "cancel", StringComparison.OrdinalIgnoreCase))
-            return CommandResult.GoBack();
 
         var rawName = formInput["name"]?.ToString()?.Trim();
         var open = (formInput["open"]?.ToString() ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -68,6 +70,20 @@ internal sealed partial class NewScriptWizardForm : FormContent
             OpenInEditor(path);
 
         return CommandResult.GoBack();
+    }
+
+    private static string? ParseVerb(string? data)
+    {
+        if (string.IsNullOrWhiteSpace(data))
+            return null;
+        try
+        {
+            return JsonNode.Parse(data)?["verb"]?.ToString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     private static string? CreateScript(string root, string rawName)
