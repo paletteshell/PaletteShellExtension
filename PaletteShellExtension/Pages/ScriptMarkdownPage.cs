@@ -95,7 +95,12 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
             return "_Script timed out._";
 
         if (result.ExitCode != 0)
-            return $"**Script failed with exit code {result.ExitCode}.**";
+        {
+            var error = result.StandardError?.Trim();
+            return string.IsNullOrEmpty(error)
+                ? $"**Script failed with exit code {result.ExitCode}.**"
+                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
+        }
 
         return string.IsNullOrWhiteSpace(result.StandardOutput)
             ? "_Script completed with no output._"

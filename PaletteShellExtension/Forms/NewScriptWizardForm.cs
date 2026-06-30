@@ -1,6 +1,6 @@
-﻿using Microsoft.CommandPalette.Extensions.Toolkit;
+using Microsoft.CommandPalette.Extensions.Toolkit;
+using PaletteShellExtension.Classes;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -67,7 +67,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
         var path = CreateScript(_root, name);
 
         if (open && path is not null)
-            OpenInEditor(path);
+            EditorLauncher.Open(path);
 
         return CommandResult.GoBack();
     }
@@ -120,40 +120,28 @@ internal sealed partial class NewScriptWizardForm : FormContent
             if (!File.Exists(candidate)) return candidate;
         }
     }
-    private static void OpenInEditor(string file)
-    {
-        var editor = Environment.GetEnvironmentVariable("VISUAL")
-                 ?? Environment.GetEnvironmentVariable("EDITOR")
-                 ?? "notepad.exe";
-        Process.Start(new ProcessStartInfo(editor, $"\"{file}\"") { UseShellExecute = true });
-    }
-
-    // ---------- templates (headers match your extended ScriptMetadata) ----------
-
-
+    // ---------- templates (match the sample-script format the parser reads:
+    //            comment-based help + [Script*] attributes) ----------
 
     private static string DefaultHeader(string name) =>
-$@"<#
-Title: {name}
-Description: Describe what this script does.
-Args:
-Group: General
-Tags: sample
-Icon: 🧩
-IconGlyph: \uE756
-RequiresAdmin: false
-TimeoutMs: 20000
-Env:
-Host: pwsh
-Cwd: {{ScriptDir}}
-Mutex:
-Output: None
+$@"using module .\PaletteScriptAttributes.psm1
+
+<#
+.SYNOPSIS
+    {name}
+.DESCRIPTION
+    Describe what this script does.
 #>
+[ScriptHost('pwsh')]
+[ScriptGroup('General')]
+[ScriptIcon('🧩')]
+[ScriptTimeout(20000)]
+[ScriptOutput('None')]
+[CmdletBinding()]
 ";
 
     private static string BlankBody() =>
-@"
-param(
+@"param(
     # Add parameters here
     # [Parameter(Mandatory=$true)]
     # [string]$Path
@@ -164,4 +152,3 @@ param(
 ";
 
 }
-

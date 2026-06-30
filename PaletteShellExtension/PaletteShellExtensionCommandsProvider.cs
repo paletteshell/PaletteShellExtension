@@ -16,7 +16,7 @@ public partial class PaletteShellExtensionCommandsProvider : CommandProvider
         DisplayName = "PaletteShell";
         Icon = IconHelpers.FromRelativePath("Assets\\StoreLogo.png");
         _commands = [
-            new CommandItem(new PaletteShellExtensionPage()) { Title = DisplayName },
+            new CommandItem(new PaletteShellExtensionPage()) { Title = DisplayName, Subtitle = "Run your PowerShell scripts" },
         ];
     }
 
