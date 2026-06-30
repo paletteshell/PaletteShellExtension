@@ -223,11 +223,11 @@ internal static partial class PowerShellScriptParser
                 case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
                     manifest.TimeoutMs = timeout;
                     break;
-                case "ScriptMutex" when values.Count >= 1:
-                    manifest.Mutex = values[0];
-                    break;
                 case "ScriptOutput" when values.Count >= 1:
                     manifest.Output = values[0];
+                    break;
+                case "ScriptGroup" when values.Count >= 1:
+                    manifest.Group = values[0];
                     break;
                 case "ScriptIcon" when values.Count >= 1:
                     manifest.IconGlyph = values[0];
@@ -258,6 +258,7 @@ internal static partial class PowerShellScriptParser
         var defaultExpr = equals >= 0 ? tail[(equals + 1)..].Trim() : null;
 
         bool mandatory = false;
+        bool allowExpression = false;
         string? helpMessage = null;
         List<string>? options = null;
         double? min = null;
@@ -316,6 +317,10 @@ internal static partial class PowerShellScriptParser
                     }
                     break;
 
+                case "AllowExpression":
+                    allowExpression = true;
+                    break;
+
                 default:
                     // A bracket with no arguments that isn't a known attribute is the type
                     // constraint (e.g. [string], [int], [switch]); the one nearest the
@@ -345,7 +350,8 @@ internal static partial class PowerShellScriptParser
             Required = mandatory ? true : null,
             Options = options,
             Min = min,
-            Max = max
+            Max = max,
+            AllowExpression = allowExpression
         };
     }
 
@@ -406,10 +412,10 @@ internal static partial class PowerShellScriptParser
     {
         "Parameter", "ValidateSet", "ValidateRange", "ValidatePattern", "ValidateLength",
         "ValidateCount", "ValidateNotNull", "ValidateNotNullOrEmpty", "ValidateScript",
-        "ValidateDrive", "ValidateUserDrive", "AllowNull", "AllowEmptyString",
+        "ValidateDrive", "ValidateUserDrive", "AllowNull", "AllowEmptyString", "AllowExpression",
         "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
         "PSDefaultValue", "ArgumentCompleter",
-        "ScriptHost", "ScriptCwd", "RequiresElevation", "ScriptTimeout", "ScriptMutex",
+        "ScriptHost", "ScriptCwd", "RequiresElevation", "ScriptTimeout",
         "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptEnv"
     };
 

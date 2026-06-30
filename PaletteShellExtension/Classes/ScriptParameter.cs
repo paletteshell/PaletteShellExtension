@@ -13,4 +13,8 @@ public sealed class ScriptParameter
     public double? Min { get; set; }
     public double? Max { get; set; }
     public List<string>? Options { get; set; } // for enum
+
+    // When true (script marked the parameter [AllowExpression]), the form value is
+    // injected verbatim for PowerShell to evaluate instead of being passed literally.
+    public bool AllowExpression { get; set; }
 }

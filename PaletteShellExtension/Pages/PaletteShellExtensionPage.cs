@@ -41,7 +41,6 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
     public void RefreshFiles()
     {
-        _files.Clear();
         _cachedItems = null; // Clear cache
 
         var files = Directory.GetFiles(_rootDirectory, "*.ps1", SearchOption.TopDirectoryOnly);
@@ -55,7 +54,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     {
         var assembly = Assembly.GetExecutingAssembly();
         var resourceNames = assembly.GetManifestResourceNames()
-            .Where(n => n.Contains("SampleScripts") && n.EndsWith(".ps1"))
+            .Where(n => n.Contains("SampleScripts") && n.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         foreach (var resourceName in resourceNames)
@@ -132,6 +131,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             new ListItem(new OpenFolderCommand(_rootDirectory)) { Title = "Open scripts folder" },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
             new ListItem(new NewScriptWizardPage(_rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
+            new ListItem(new OpenLinkCommand("Find more scripts", "https://github.com/paletteshell/PaletteShellScripts", "")) { Title = "Find more scripts", Subtitle = "Browse the PaletteShellScripts repository on GitHub" },
         ];
 
         foreach (var path in _files.OrderBy(Path.GetFileName))
@@ -145,7 +145,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
 
                 ICommand command;
-                if (manifest?.Parameters?.Any() == true)
+                if (manifest?.Parameters is { Count: > 0 })
                 {
                     // Script has parameters - navigate to parameter form page
                     var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
@@ -185,7 +185,11 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     Subtitle = subtitle,
                     Icon = !string.IsNullOrWhiteSpace(manifest?.IconGlyph)
                         ? new IconInfo(manifest.IconGlyph)
-                        : null
+                        : null,
+                    Tags = string.IsNullOrWhiteSpace(manifest?.Group)
+                        ? []
+                        : [new Tag(manifest.Group)],
+                    MoreCommands = [new CommandContextItem(new OpenInEditorCommand(path))]
                 };
 
                 items.Add(listItem);
