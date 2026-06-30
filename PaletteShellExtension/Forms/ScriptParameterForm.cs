@@ -36,16 +36,18 @@ internal sealed class ScriptParameterForm : FormContent
         DataJson = BuildDataJson();
     }
 
-    public override CommandResult SubmitForm(string payload)
+    public override CommandResult SubmitForm(string inputs, string data)
     {
         try
         {
-            var obj = JsonNode.Parse(payload)?.AsObject();
-            if (obj is null) return CommandResult.Dismiss();
-
-            var verb = obj["verb"]?.ToString();
+            // The clicked button's verb is carried in the action's `data`, not in the
+            // input values, so it must be read from the `data` argument.
+            var verb = ParseVerb(data);
             if (string.Equals(verb, "cancel", StringComparison.OrdinalIgnoreCase))
                 return CommandResult.Dismiss();
+
+            var obj = JsonNode.Parse(inputs)?.AsObject();
+            if (obj is null) return CommandResult.Dismiss();
 
             // Build argument list from form values
             var args = new List<string>();
@@ -247,6 +249,20 @@ internal sealed class ScriptParameterForm : FormContent
     };
 
     private static string BuildDataJson() => new JsonObject().ToJsonString();
+
+    private static string? ParseVerb(string? data)
+    {
+        if (string.IsNullOrWhiteSpace(data))
+            return null;
+        try
+        {
+            return JsonNode.Parse(data)?["verb"]?.ToString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     private static string QuoteIfNeeded(string value)
     {
