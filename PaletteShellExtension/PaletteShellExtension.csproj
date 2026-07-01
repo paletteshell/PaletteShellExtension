@@ -69,6 +69,11 @@
     <None Include="PaletteScriptAttributes.psm1">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Agent-facing script authoring spec. Single source at the repo root; linked into the
+         output so it ships next to the module and gets copied into the user's scripts folder. -->
+    <None Include="..\AGENTS.md" Link="AGENTS.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
