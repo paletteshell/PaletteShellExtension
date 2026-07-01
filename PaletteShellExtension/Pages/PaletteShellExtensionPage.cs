@@ -103,6 +103,23 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             }
         }
 
+        // Copy the agent-facing authoring spec so tools pointed at the scripts folder discover
+        // the script contract. Best-effort and always refreshed to stay in sync with the extension.
+        var agentsSourcePath = Path.Combine(baseDir, "AGENTS.md");
+        var agentsTargetPath = Path.Combine(_rootDirectory, "AGENTS.md");
+
+        if (File.Exists(agentsSourcePath))
+        {
+            try
+            {
+                File.Copy(agentsSourcePath, agentsTargetPath, overwrite: true);
+            }
+            catch (Exception)
+            {
+                // Authoring spec copy is best-effort.
+            }
+        }
+
         // Copy TextCopy.dll and its dependencies so PowerShell can load it
         var textCopySource = Path.Combine(baseDir, "TextCopy.dll");
         var textCopyTarget = Path.Combine(_rootDirectory, "TextCopy.dll");
