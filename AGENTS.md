@@ -91,6 +91,7 @@ Set with `[ScriptOutput('<mode>')]`. Default is `None`.
 | `Toast` | Wait, capture stdout, show it in a Windows notification. |
 | `Clipboard` | Wait, capture stdout, copy it to the clipboard. |
 | `Markdown` | Wait, render stdout as formatted Markdown on its own page. |
+| `Result` | Wait, show stdout as a single copyable result (Enter copies; a **Run again** command regenerates). Print just the value; good for generators (GUID, password, token). |
 | `File` | Write stdout to a temp file and open it in the user's editor. Add an extension hint after a colon: `File:csv`, `File:json`, etc. Best for large/structured output. |
 | `List` | Parse stdout into a searchable, pickable list — turns the script into a search/pick provider (see below). |
 

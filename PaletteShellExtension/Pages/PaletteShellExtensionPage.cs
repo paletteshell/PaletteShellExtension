@@ -4,6 +4,7 @@
 
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using PaletteShellExtension.Classes;
 using PaletteShellExtension.Commands;
 using PaletteShellExtension.Pages;
 using System;
@@ -19,6 +20,7 @@ namespace PaletteShellExtension;
 internal sealed partial class PaletteShellExtensionPage : ListPage
 {
     private readonly string _rootDirectory;
+    private readonly PinnedScripts _pins;
     private List<string> _files = [];
     private IListItem[]? _cachedItems;
 
@@ -33,13 +35,16 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
            "PaletteShellScripts");
 
         Directory.CreateDirectory(_rootDirectory);
+        _pins = new PinnedScripts(_rootDirectory);
         CopySampleScripts();
         CopyPowerShellModule();
         RefreshFiles();
 
     }
 
-    public void RefreshFiles()
+    /// <summary>Rescans the scripts folder and refreshes the list. Returns the number of
+    /// .ps1 scripts found so callers (e.g. the Reload command) can confirm completion.</summary>
+    public int RefreshFiles()
     {
         _cachedItems = null; // Clear cache
 
@@ -48,6 +53,8 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         // Use the page's change notification so CmdPal asks for items again.
         RaiseItemsChanged();
+
+        return _files.Count;
     }
 
     private void CopySampleScripts()
@@ -151,7 +158,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             new ListItem(new OpenLinkCommand("Find more scripts", "https://github.com/paletteshell/PaletteShellScripts", "")) { Title = "Find more scripts", Subtitle = "Browse the PaletteShellScripts repository on GitHub" },
         ];
 
-        foreach (var path in _files.OrderBy(Path.GetFileName))
+        // Script items are sorted below: pinned scripts first, then alphabetically by their
+        // displayed Title (not by filename, since the manifest Title often differs from it).
+        // The Pinned flag is captured per item so the sort doesn't have to re-read the store.
+        List<(bool Pinned, string Title, IListItem Item)> scriptItems = [];
+
+        foreach (var path in _files)
         {
             try
             {
@@ -161,6 +173,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
                 var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
                 var wantsList = string.Equals(manifest?.Output, "List", StringComparison.OrdinalIgnoreCase);
+                var wantsResult = string.Equals(manifest?.Output, "Result", StringComparison.OrdinalIgnoreCase);
 
                 ICommand command;
                 if (wantsList && manifest is not null)
@@ -206,11 +219,29 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                         cwd: resolvedCwd,
                         env: manifest.Env);
                 }
+                else if (wantsResult && manifest is not null)
+                {
+                    // No parameters, Result output - navigate to a page that runs the script
+                    // and shows its output as a single copyable result (Enter copies), the way
+                    // a calculator shows an answer.
+                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+
+                    command = new ScriptResultPage(
+                        scriptPath: path,
+                        manifest: manifest,
+                        host: manifest.Host ?? "pwsh",
+                        cwd: resolvedCwd,
+                        env: manifest.Env);
+                }
                 else
                 {
                     // No parameters - run script directly
                     command = new RunScriptCommand(path, manifest);
                 }
+
+                var group = manifest?.Group;
+
+                var pinned = _pins.IsPinned(path);
 
                 var listItem = new ListItem(command)
                 {
@@ -218,23 +249,71 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     Subtitle = subtitle,
                     Icon = !string.IsNullOrWhiteSpace(manifest?.IconGlyph)
                         ? new IconInfo(manifest.IconGlyph)
-                        : null,
-                    Tags = string.IsNullOrWhiteSpace(manifest?.Group)
-                        ? []
-                        : [new Tag(manifest.Group)],
-                    MoreCommands = [new CommandContextItem(new OpenInEditorCommand(path))]
+                        : DefaultScriptIcon,
+                    Tags = BuildTags(pinned, group),
+                    MoreCommands = BuildContextCommands(path)
                 };
 
-                items.Add(listItem);
+                scriptItems.Add((pinned, title, listItem));
             }
             catch (Exception)
             {
-                // Skip scripts that fail to parse or build.
+                // Building the rich entry failed (e.g. a malformed parameter block). Rather than
+                // dropping the script silently, surface it with an error hint so the user can
+                // find it, open it to fix, or remove it — instead of wondering where it went.
+                var pinned = _pins.IsPinned(path);
+                var errorTitle = Path.GetFileNameWithoutExtension(path);
+                scriptItems.Add((pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
+                {
+                    Title = errorTitle,
+                    Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
+                    Icon = new IconInfo(""), // Warning
+                    Tags = BuildTags(pinned, null),
+                    MoreCommands = BuildContextCommands(path)
+                }));
             }
         }
 
+        // Keep the system commands at the very top; then pinned scripts, then the rest —
+        // each group alphabetical by title.
+        items.AddRange(scriptItems
+            .OrderByDescending(i => i.Pinned)
+            .ThenBy(i => i.Title, StringComparer.CurrentCultureIgnoreCase)
+            .Select(i => i.Item));
+
         _cachedItems = [.. items];
         return _cachedItems;
+    }
+
+    // Fallback glyph for scripts that don't declare their own [ScriptIcon]. Keeps the list
+    // scannable instead of showing rows with no icon at all.
+    private static readonly IconInfo DefaultScriptIcon = new(""); // CommandPrompt
+
+    // Per-script context menu shared by normal and error entries: pin, open, reveal, delete.
+    private CommandContextItem[] BuildContextCommands(string path) =>
+    [
+        new CommandContextItem(new TogglePinCommand(path, _pins, () => RefreshFiles())),
+        new CommandContextItem(new OpenInEditorCommand(path)),
+        new CommandContextItem(new RevealInExplorerCommand(path)),
+        new CommandContextItem(new DeleteScriptCommand(path, () => RefreshFiles())),
+    ];
+
+    // Row tags: a "Pinned" marker (when pinned) followed by the script's group, if any. Either
+    // may be absent, so an unpinned, ungrouped script gets an empty tag list.
+    private static ITag[] BuildTags(bool pinned, string? group)
+    {
+        List<ITag> tags = [];
+        if (pinned)
+        {
+            tags.Add(new Tag("📌 Pinned"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(group))
+        {
+            tags.Add(new Tag(group));
+        }
+
+        return [.. tags];
     }
 
 

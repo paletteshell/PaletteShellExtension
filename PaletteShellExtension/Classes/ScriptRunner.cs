@@ -208,9 +208,17 @@ internal static class ScriptRunner
         string? cwd,
         Dictionary<string, string>? env = null,
         bool requiresAdmin = false,
-        int? timeoutMs = null)
+        int? timeoutMs = null,
+        bool reportProgress = true)
     {
         Process? proc = null;
+
+        // Show a "Running <script>…" spinner in the status bar for the duration of the
+        // wait. Folded in here (rather than per-script) so every output mode benefits —
+        // a slow script no longer looks frozen until its toast/page appears.
+        var progress = reportProgress
+            ? ScriptStatus.ShowRunning(Path.GetFileNameWithoutExtension(scriptPath))
+            : null;
 
         try
         {
@@ -280,6 +288,7 @@ internal static class ScriptRunner
         finally
         {
             proc?.Dispose();
+            ScriptStatus.Hide(progress);
         }
     }
 }

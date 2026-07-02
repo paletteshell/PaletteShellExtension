@@ -14,10 +14,15 @@
 - **📝 Parameter Support**: Scripts with parameters get an interactive input form, generated from the script's own `param()` block
 - **🎨 Rich Metadata**: Organize scripts with icons, descriptions, groups, and tags via PowerShell attributes
 - **📄 Markdown Output**: Render a script's output as formatted Markdown inside the palette
+- **🧮 Result Output**: Show a script's output as a single copyable result — press Enter to copy, "Run again" to regenerate; great for generators like a new GUID, password, or token
 - **📜 List Output**: Turn a script into a search/pick provider — its stdout becomes a searchable list of items you can copy or open
+- **⏳ Progress Feedback**: A "Running &lt;script&gt;…" spinner shows in the status bar while any script executes, so a slow script no longer looks frozen
+- **📌 Pin to Top**: Pin your most-used scripts so they always sort to the top of the list
+- **🗂️ Script Management**: Delete a script to the Recycle Bin (with confirmation) or reveal it in File Explorer — right from its context menu
 - **✏️ Open in Editor**: Jump straight to any script's source in your `$EDITOR`/`$VISUAL` (Notepad by default)
 - **⚡ Cross-Platform PowerShell**: Supports both PowerShell Core (`pwsh`) and Windows PowerShell (`powershell`)
-- **🔒 Security**: Runs in user context with optional admin elevation per script
+- **🤖 AI-Ready**: Ships an `AGENTS.md` authoring spec into your scripts folder so AI coding agents can write compliant scripts for you on the fly
+- **🔒 Security**: Runs in user context with optional admin elevation and an optional confirmation prompt per script
 
 ## 📖 Overview
 
@@ -43,9 +48,18 @@ The list always begins with four built-in actions:
 - **Create new script** — opens a guided wizard that scaffolds a new `.ps1` with metadata headers.
 - **Find more scripts** — opens the community [PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts) repository in your browser.
 
-Every script item also carries an **Open in editor** context command that opens the source file in your preferred editor.
+Every script item carries a context menu (right-click, or the ⋯ commands) with:
 
-> ℹ️ New scripts and edits are picked up only when you run **"Reload scripts"** — this is intentional, not a bug.
+- **Pin to top / Unpin** — pins the script so it always sorts above the rest (see [Pinning](#pinning)).
+- **Open in editor** — opens the source file in your preferred editor.
+- **Reveal in File Explorer** — opens Explorer with the script file selected, for managing it directly.
+- **Delete script** — sends the script to the Recycle Bin after a confirmation dialog, then reloads the list.
+
+Scripts are ordered **pinned first, then alphabetically by their displayed title** (the `.SYNOPSIS`, which often differs from the file name). Each script also shows its **group** as a tag; pinned scripts additionally carry a **📌 Pinned** tag. Scripts without a `[ScriptIcon]` get a default terminal glyph so every row is scannable.
+
+If a script fails to parse (e.g. a malformed `param()` block), it isn't dropped silently — it still appears with a **⚠ Couldn't load this script** subtitle and its context menu, so you can open it to fix or delete it.
+
+> ℹ️ New scripts and edits are picked up only when you run **"Reload scripts"** — this is intentional, not a bug. Reloading shows a **"Reloaded N scripts"** toast so you know the rescan ran.
 
 ### Parsing the manifest
 
@@ -54,8 +68,9 @@ For each script, `PowerShellScriptParser` parses the file using the official Pow
 - **Title** from the comment-based help `.SYNOPSIS` (falls back to the file name).
 - **Description** from `.DESCRIPTION`.
 - **Parameters** from the `param()` block, including type, default value, whether it's mandatory, and validation info (`[ValidateSet(...)]` becomes a dropdown, `[ValidateRange(...)]` becomes min/max bounds).
-- **Behavior attributes** such as host, working directory, timeout, output mode, icon, environment variables, and elevation (see the [attribute reference](#available-attributes)).
+- **Behavior attributes** such as host, working directory, timeout, output mode, icon, environment variables, elevation, and confirmation (see the [attribute reference](#available-attributes)).
 - **Elevation** from either the `[RequiresElevation()]` attribute or the built-in `#Requires -RunAsAdministrator` directive.
+- **Confirmation** from the `[ConfirmBeforeRun('message')]` attribute, which gates the run behind a yes/no dialog.
 
 ### Running a script
 
@@ -63,27 +78,38 @@ Selecting a script item routes to one of these paths, based on its metadata:
 
 - **Has parameters** → opens `ScriptParameterFormPage`, an auto-generated form. Once you submit, the collected values are passed to the script.
 - **No parameters, `[ScriptOutput('Markdown')]`** → opens `ScriptMarkdownPage`, which runs the script and renders its stdout as formatted Markdown.
+- **No parameters, `[ScriptOutput('Result')]`** → opens `ScriptResultPage`, which runs the script and shows its stdout as a single copyable result (see [Result output](#result-output)).
 - **No parameters, `[ScriptOutput('List')]`** → opens `ScriptListPage`, which runs the script and turns its stdout into a searchable list of items (see [List output](#list-output)).
 - **No parameters, any other output mode** → runs the script directly via `RunScriptCommand`.
 
 Execution is handled by `ScriptRunner`, which launches `pwsh.exe` (or `powershell.exe`) with `-STA -NoProfile -ExecutionPolicy Bypass`. When the `PaletteScriptAttributes.psm1` module is present alongside the script, the runner imports it and dot-sources the script so the custom attributes resolve and the helper functions (clipboard, logging) are available; the information stream is redirected to stdout so `Write-Host` output is captured.
+
+While the runner waits on a script, it shows a **"Running &lt;script&gt;…"** spinner in the palette's status bar and clears it when the script finishes. This is built into `ScriptRunner` rather than per-script, so every waited output mode gets the feedback for free — a slow script no longer looks frozen until its toast or page appears.
+
+If a script declares `[ConfirmBeforeRun('message')]`, selecting it first shows a confirmation dialog carrying that message; the script only runs if you accept. For a parameterized script the form is collected first, then the confirmation appears on submit. This pairs naturally with `[RequiresElevation()]` to guard destructive scripts.
 
 Whether PaletteShell waits for the script depends on its output mode and timeout:
 
 | Condition | Behavior |
 |-----------|----------|
 | `[ScriptOutput('None')]` and no `[ScriptTimeout]` | Fire-and-forget — the process is started and a "Script completed" toast is shown. |
-| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`File`) | PaletteShell waits (up to the declared timeout, or a 30s default), captures stdout/stderr, and surfaces the result. |
+| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`Result`/`List`/`File`) | PaletteShell waits (up to the declared timeout, or a 30s default), captures stdout/stderr, and surfaces the result. |
 | `[ScriptTimeout(ms)]` set | PaletteShell waits up to `ms`, then kills the process tree on timeout. |
 | `[ScriptOutput('Clipboard')]` | Captured output is copied to the clipboard. |
 | `[ScriptOutput('Markdown')]` | Captured output is rendered as Markdown on its own page. |
+| `[ScriptOutput('Result')]` | Captured output is shown as a single copyable result on its own page (Enter copies; "Run again" regenerates). |
 | `[ScriptOutput('List')]` | Captured output is parsed into a searchable list of selectable items on its own page. |
 | `[ScriptOutput('File')]` | Captured output is written to a temp file and opened in your editor. |
+| `[ConfirmBeforeRun('msg')]` | Selecting the script prompts a yes/no dialog before it runs. |
 | `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode. |
 
 ### Cross-platform clipboard
 
 The bundled `PaletteScriptAttributes.psm1` module exposes `Get-ClipboardText` / `Set-ClipboardText`, which use the [TextCopy](https://github.com/CopyText/TextCopy) library with a Windows Forms fallback. The host extension also uses TextCopy when copying captured output to the clipboard.
+
+### Pinning
+
+Use a script item's **Pin to top** context command to keep it above the rest of the list; **Unpin** puts it back. Pinning is a per-user UI preference, so it lives outside the `.ps1` files — toggling a pin never rewrites your script. The pinned set is stored in a plain `pinned.txt` alongside your scripts (one entry per line, keyed by the script's path relative to the scripts folder), so it survives reloads and restarts and travels with the folder if you sync or copy it. Renaming or moving a script simply orphans its old pin, which is harmless.
 
 ## 🚀 Getting Started
 
@@ -124,6 +150,16 @@ $result = $MyParameter.ToUpper()
 Set-ClipboardText $result
 ```
 
+### 🤖 Let an AI agent write scripts for you
+
+PaletteShell ships an [`AGENTS.md`](AGENTS.md) authoring spec and copies it into your `Documents\PaletteShellScripts` folder (kept in sync on every load, right next to `PaletteScriptAttributes.psm1`). It's the full contract for a valid script — the required file shape, every recognized `[Script*]` attribute, output modes, parameter-to-form mapping, and a pre-finish checklist.
+
+Because it lives alongside your scripts, any AI coding agent you point at that folder — Claude Code, Copilot, Cursor, and others that read `AGENTS.md` — discovers the rules automatically and can scaffold new `.ps1` scripts on the fly that PaletteShell loads and runs correctly. Just ask:
+
+> "Write me a PaletteShell script that formats the clipboard as a Markdown table."
+
+The agent reads `AGENTS.md`, produces a compliant script in the folder, and you run **"Reload scripts"** to pick it up. You can also paste the contents of `AGENTS.md` into any chat-based assistant as context if it isn't working directly in the folder.
+
 ### Available Attributes
 
 | Attribute | Purpose |
@@ -131,6 +167,7 @@ Set-ClipboardText $result
 | `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` (default) or `'powershell'` |
 | `[ScriptCwd('{ScriptDir}')]` | Working directory (supports path tokens, below) |
 | `[RequiresElevation()]` | Run the script with administrator rights |
+| `[ConfirmBeforeRun('message')]` | Prompt a yes/no confirmation (with `message`) before running |
 | `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture |
 | `[ScriptGroup('Category')]` | Group/category name (shown as a tag) |
 | `[ScriptIcon('🚀')]` | Icon emoji or glyph shown in the palette |
@@ -151,6 +188,7 @@ Set-ClipboardText $result
 - **Clipboard** — copy captured output to the clipboard
 - **Toast** — show the captured output in a Windows notification
 - **Markdown** — run the script and render its output as formatted Markdown on its own page
+- **Result** — run the script and show its output as a single result you can copy (press Enter), with a **Run again** command to regenerate — like a calculator answer. Ideal for generators such as a new GUID, password, or token (see [Result output](#result-output))
 - **List** — parse the script's output into a searchable list of selectable items, turning the script into a search/pick provider (see [List output](#list-output))
 - **File** — write captured output to a temp file and open it in your editor (`$VISUAL`/`$EDITOR`, else Notepad). Best for large or structured output that's unwieldy in a toast. Append an extension hint after a colon to control the file type:
 
@@ -159,6 +197,20 @@ Set-ClipboardText $result
   [ScriptOutput('File:csv')]    # → .csv, so it opens in Excel
   [ScriptOutput('File:json')]   # → .json, for syntax-highlighted JSON
   ```
+
+### Result output
+
+`[ScriptOutput('Result')]` runs the script and shows its output as a **single copyable result**, the way a calculator shows an answer. Press **Enter** to copy the value to the clipboard; a secondary **Run again** command re-runs the script in place, so generators can hand you a fresh value without leaving the page.
+
+Print just the value on stdout — that becomes the result. For example, `Generate-GUID.ps1`:
+
+```powershell
+[ScriptOutput('Result')]
+param()
+
+# Emit just the value; Result mode shows it as a copyable result.
+[System.Guid]::NewGuid().ToString()
+```
 
 ### List output
 
@@ -207,6 +259,16 @@ param([string]$Query)
 ) | ConvertTo-Json -AsArray -Compress
 ```
 
+### Confirmation prompts
+
+Add `[ConfirmBeforeRun('message')]` to gate a script behind a yes/no dialog — the natural companion to `[RequiresElevation()]` for destructive scripts. Selecting the script (or, for a parameterized script, submitting the form) shows the dialog with your message; the script runs only if you accept.
+
+```powershell
+[RequiresElevation()]
+[ConfirmBeforeRun('This permanently deletes the selected files.')]
+param([string]$Path)
+```
+
 ### Parameter Form Mapping
 
 Parameters in your `param()` block automatically become form fields:
@@ -240,12 +302,15 @@ The extension ships with ready-to-use scripts that double as working examples:
 | `Clipboard-RemoveDuplicateLines` | Remove duplicate lines |
 | `Clipboard-TrimLines` | Trim whitespace from each line |
 | `Clipboard-ToCSV` | Convert clipboard text to CSV |
+| `Clear-TempFiles` | Delete old TEMP files after a confirmation prompt (demonstrates ConfirmBeforeRun on a parameterized script) |
 | `Text-Transform` | Parameterized text transformation (demonstrates the input form) |
-| `Generate-GUID` | Generate a new GUID and copy it to the clipboard |
+| `Generate-GUID` | Generate a new GUID and show it as a copyable result (demonstrates Result output) |
 | `Clipboard-UnixTimestamp` | Insert/convert a Unix timestamp |
 | `System-Report` | Render a system information report (demonstrates Markdown output) |
 | `Export-ProcessList` | Snapshot running processes as CSV and open it in Excel (demonstrates File output) |
+| `Get-PublicIP` | Look up this machine's public IP and show it as a copyable result (demonstrates Result output) |
 | `Git-Branches` | Type a repo folder path and pick one of its branches to copy (demonstrates List output as a live provider) |
+| `Restart-Explorer` | Restart the Windows Explorer shell after a confirmation prompt (demonstrates ConfirmBeforeRun) |
 
 For more, browse the community library at **[paletteshell/PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)**.
 
@@ -276,12 +341,20 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `Classes/ScriptManifest.cs`, `ScriptParameter.cs` | Parsed metadata models |
 | `Classes/ScriptRunner.cs` | Builds the process and runs scripts (fire-and-forget or wait-and-capture) |
 | `Classes/ScriptOutputHandler.cs` | Maps captured output to a result per the script's output mode |
+| `Classes/ScriptStatus.cs` | Shows the "Running…" spinner in the status bar while a script runs |
+| `Classes/PinnedScripts.cs` | Tracks pinned scripts (persisted to `pinned.txt`) so they sort to the top |
+| `Classes/RecycleBin.cs` | Sends a deleted script to the Windows Recycle Bin via `SHFileOperation` |
 | `Classes/EditorLauncher.cs` | Opens a script in `$VISUAL`/`$EDITOR` (Notepad fallback) |
-| `Commands/RunScriptCommand.cs` | Runs a parameterless script and handles output/clipboard/toast |
+| `Commands/RunScriptCommand.cs` | Runs a parameterless script and handles output/clipboard/toast/confirmation |
+| `Commands/CallbackCommand.cs` | Wraps a callback as a command — the confirmed action behind a confirmation dialog |
+| `Commands/TogglePinCommand.cs` | Pins/unpins a script and refreshes the list |
+| `Commands/DeleteScriptCommand.cs` | Deletes a script to the Recycle Bin after a confirmation dialog |
+| `Commands/RevealInExplorerCommand.cs` | Opens File Explorer with the script file selected |
 | `Commands/OpenInEditorCommand.cs`, `OpenFolderCommand.cs`, `OpenLinkCommand.cs`, `ReloadPageCommand.cs` | Built-in and per-item commands |
 | `Pages/ScriptParameterFormPage.cs`, `Forms/ScriptParameterForm.cs` | Auto-generated input form for parameterized scripts |
 | `Pages/ScriptMarkdownPage.cs` | Runs a script and renders its output as Markdown |
 | `Pages/ScriptListPage.cs` | Runs a script and turns its stdout into a searchable, pickable list |
+| `Pages/ScriptResultPage.cs` | Runs a script and shows its output as a single copyable result (Enter copies; Run again regenerates) |
 | `Commands/CopyValueCommand.cs` | Copies a List item's value to the clipboard when picked |
 | `Pages/NewScriptWizardPage.cs`, `Forms/NewScriptWizardForm.cs` | "Create new script" scaffolding wizard |
 | `PaletteScriptAttributes.psm1` | PowerShell module defining the metadata attributes and clipboard/logging helpers |

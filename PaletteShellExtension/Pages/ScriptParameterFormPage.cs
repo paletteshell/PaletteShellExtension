@@ -19,13 +19,33 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
         string? cwd = null,
         Dictionary<string, string>? env = null)
     {
-        _form = new ScriptParameterForm(scriptPath, manifest, host, cwd, env, ShowMarkdown);
+        _form = new ScriptParameterForm(scriptPath, manifest, host, cwd, env, ShowMarkdown, BeginRun, EndRun);
         _content = [_form];
 
         Title = manifest.Title ?? "Run Script";
         Name = "script-params";
         Icon = new(manifest.IconGlyph ?? "\uE7C3");
         Id = $"ScriptParams_{System.IO.Path.GetFileNameWithoutExtension(scriptPath)}";
+    }
+
+    // Called by the form the moment a run starts, so the user gets immediate feedback instead
+    // of a frozen form: swap to a "Running…" panel and turn on the page's loading spinner while
+    // the script executes on a background thread. Used for the Markdown path, whose result is
+    // rendered in place once it finishes.
+    private void BeginRun()
+    {
+        _markdown.Body = $"### ⏳ Running {Title}…\n\nThis can take a few seconds.";
+        _content = [_markdown];
+        IsLoading = true;
+        RaiseItemsChanged();
+    }
+
+    // Called when the run finishes; clears the loading spinner. The result content itself is
+    // set by ShowMarkdown just before this.
+    private void EndRun()
+    {
+        IsLoading = false;
+        RaiseItemsChanged();
     }
 
     // Called by the form (when the script declares ScriptOutput("Markdown")) to

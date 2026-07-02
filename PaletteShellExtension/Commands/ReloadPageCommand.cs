@@ -8,7 +8,12 @@ internal sealed partial class ReloadPageCommand(PaletteShellExtensionPage page) 
     public override IconInfo Icon => new(""); // Refresh
     public override CommandResult Invoke()
     {
-        page.RefreshFiles();
-        return CommandResult.KeepOpen();
+        var count = page.RefreshFiles();
+        var noun = count == 1 ? "script" : "scripts";
+        return CommandResult.ShowToast(new ToastArgs
+        {
+            Message = $"Reloaded {count} {noun}",
+            Result = CommandResult.KeepOpen(),
+        });
     }
 }
