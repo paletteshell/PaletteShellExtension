@@ -2,15 +2,28 @@ using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using PaletteShellExtension.Forms;
+using System;
 using System.Collections.Generic;
 
 namespace PaletteShellExtension.Pages;
 
 internal sealed partial class ScriptParameterFormPage : ContentPage
 {
-    private readonly ScriptParameterForm _form;
+    // Kept so the input form can be rebuilt fresh (see GetContent).
+    private readonly string _scriptPath;
+    private readonly ScriptManifest _manifest;
+    private readonly string? _host;
+    private readonly string? _cwd;
+    private readonly Dictionary<string, string>? _env;
+
+    private ScriptParameterForm _form;
     private readonly MarkdownContent _markdown = new();
     private IContent[] _content;
+
+    // Timestamp of the last run activity (start / result / finish). Used by GetContent to tell a
+    // just-finished run's render (which should keep showing the result) apart from the page being
+    // reopened later (which should return to a fresh form).
+    private long _lastRunActivityTick;
 
     public ScriptParameterFormPage(
         string scriptPath,
@@ -19,23 +32,32 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
         string? cwd = null,
         Dictionary<string, string>? env = null)
     {
-        _form = new ScriptParameterForm(scriptPath, manifest, host, cwd, env, ShowMarkdown, BeginRun, EndRun);
+        _scriptPath = scriptPath;
+        _manifest = manifest;
+        _host = host;
+        _cwd = cwd;
+        _env = env;
+
+        _form = CreateForm();
         _content = [_form];
 
         Title = manifest.Title ?? "Run Script";
         Name = "script-params";
-        Icon = new(manifest.IconGlyph ?? "\uE7C3");
+        Icon = new(manifest.IconGlyph ?? "");
         Id = $"ScriptParams_{System.IO.Path.GetFileNameWithoutExtension(scriptPath)}";
     }
 
+    private ScriptParameterForm CreateForm()
+        => new(_scriptPath, _manifest, _host, _cwd, _env, ShowMarkdown, BeginRun, EndRun);
+
     // Called by the form the moment a run starts, so the user gets immediate feedback instead
     // of a frozen form: swap to a "Running…" panel and turn on the page's loading spinner while
-    // the script executes on a background thread. Used for the Markdown path, whose result is
-    // rendered in place once it finishes.
+    // the script executes on a background thread. The rendered result replaces it once ready.
     private void BeginRun()
     {
         _markdown.Body = $"### ⏳ Running {Title}…\n\nThis can take a few seconds.";
         _content = [_markdown];
+        _lastRunActivityTick = Environment.TickCount64;
         IsLoading = true;
         RaiseItemsChanged();
     }
@@ -44,6 +66,7 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
     // set by ShowMarkdown just before this.
     private void EndRun()
     {
+        _lastRunActivityTick = Environment.TickCount64;
         IsLoading = false;
         RaiseItemsChanged();
     }
@@ -56,8 +79,29 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
             ? "_Script completed with no output._"
             : body;
         _content = [_markdown];
+        _lastRunActivityTick = Environment.TickCount64;
         RaiseItemsChanged();
     }
 
-    public override IContent[] GetContent() => _content;
+    public override IContent[] GetContent()
+    {
+        // This page instance is reused across navigations. If it's still showing a previous run's
+        // result and this fetch isn't part of that just-finished run, the page is being reopened —
+        // so rebuild a fresh input form. (A brand-new form is built because re-displaying the
+        // already-submitted one leaves the page stuck loading.)
+        //
+        // The grace window covers the content fetches that immediately follow a run; a reopen
+        // happens well after. The palette only fetches content on navigation or when we raise
+        // ItemsChanged — it doesn't poll — so this won't wipe a result while you're viewing it.
+        const long GraceMs = 1000;
+        if (_content.Length == 1
+            && ReferenceEquals(_content[0], _markdown)
+            && Environment.TickCount64 - _lastRunActivityTick > GraceMs)
+        {
+            _form = CreateForm();
+            _content = [_form];
+        }
+
+        return _content;
+    }
 }
