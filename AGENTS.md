@@ -91,6 +91,7 @@ Set with `[ScriptOutput('<mode>')]`. Default is `None`.
 | `Toast` | Wait, capture stdout, show it in a Windows notification. |
 | `Clipboard` | Wait, capture stdout, copy it to the clipboard. |
 | `Markdown` | Wait, render stdout as formatted Markdown on its own page. |
+| `Result` | Wait, show stdout as a single copyable result (Enter copies; a **Run again** command regenerates). Print just the value; good for generators (GUID, password, token). |
 | `File` | Write stdout to a temp file and open it in the user's editor. Add an extension hint after a colon: `File:csv`, `File:json`, etc. Best for large/structured output. |
 | `List` | Parse stdout into a searchable, pickable list — turns the script into a search/pick provider (see below). |
 
@@ -118,6 +119,56 @@ variable name. Provide one of the first two so the form reads well.
 
 By default a form value is passed to the script as a **literal string**. If a parameter should accept
 a PowerShell expression instead (evaluated, not quoted), mark it `[AllowExpression()]`.
+
+## Designing inputs — what a PaletteShell script can (and can't) assume
+
+This is the most important design decision, and the one agents get wrong most often. **A PaletteShell
+script starts cold.** Unlike a shell command or an editor extension, it has **no ambient context**:
+
+- **No current working directory** — the palette has no concept of "where you are." `[ScriptCwd(...)]`
+  only sets a *fixed* or token-based directory (`{ScriptDir}`, `{Home}`, `{Temp}`), never "the folder
+  I'm looking at." A script cannot discover a directory the way `cd`-relative shell tools do.
+- **No current file, selection, or project** — there is nothing selected to operate on.
+- **No prior command / no argv** beyond what you collect explicitly.
+
+So every piece of context a script needs must arrive through one of these channels, each with a cost:
+
+| Channel | How | Friction | Best for |
+|---------|-----|----------|----------|
+| **Fixed / token path** | `[ScriptCwd]`, `[ScriptEnv]`, `{Home}`/`{Temp}`, or a constant in the body | None — zero input | A target that is always the same (temp cleanup, a known repo, "my downloads") |
+| **Clipboard** | `Get-ClipboardText` (transform, `Set-ClipboardText` back) | Low *if* the value is already copied; cumbersome if the user must go copy it first | Text/paths the user just yanked from elsewhere — the core clipboard-utility pattern |
+| **Form field** | a `param(...)` entry → auto form | Medium — the user types/pastes each run | Occasional values, or a required value with no sensible default |
+| **Live List provider** | one-parameter `[ScriptOutput('List')]`; search box *is* the input | Low — type-to-refine, no form, no submit | Search/pick/filter over a space (branches, files, lookups) |
+
+### The working-directory problem, concretely
+
+You **cannot** write a script that "runs in the current folder" — there is no current folder. To act on
+a directory you must **make the directory an input**:
+
+- A **form field** (`[string]$Path`) works but means pasting a long path on every run — heavy for a
+  keyboard-driven launcher.
+- The **clipboard** works if the user already copied the path, but forcing them to go copy it first, run
+  the script, and read the result is more steps than just opening a terminal.
+- A **live List provider** (path as the query parameter, results refresh as you type) is usually the
+  best fit — see `Git-Branches.ps1`, which takes a repo path as its live query.
+
+### Aim for the happy medium
+
+Match the **input cost to the payoff**. A one-keystroke utility should not demand a paste; a script that
+needs rich context should earn it. Prefer, in order:
+
+1. **No input** — operate on the clipboard or a fixed/derivable location. This is the sweet spot for a
+   launcher: select → done.
+2. **A default that makes the field optional** — e.g. default `$Path` to `{Home}` or a sensible root, so
+   the form can be submitted empty for the common case and overridden only when needed.
+3. **A dropdown over free text** — `[ValidateSet(...)]` turns "type the exact value" into a quick pick,
+   removing typos and typing.
+4. **A single meaningful field**, well-labeled via `.PARAMETER` / `HelpMessage`.
+
+**Avoid** designing a script that requires several heavy inputs (two paths, a path *and* a query, …): the
+collection friction usually exceeds what the palette is good for, and that task belongs in a terminal or a
+real app. If a script only makes sense with a lot of context, that is a signal it is the wrong tool for the
+palette.
 
 ## List output — static list vs. live provider
 
@@ -175,6 +226,7 @@ transform, write back with `Set-ClipboardText`, and `Write-Host` a short status 
 - [ ] `using module .\PaletteScriptAttributes.psm1` on line 1.
 - [ ] `<# .SYNOPSIS ... #>` block with a real title and description; a `.PARAMETER` line per parameter.
 - [ ] All `[Script*]` attributes are above `param(`, and only use the recognized attribute names above.
+- [ ] Input cost fits the payoff: no ambient working dir/selection exists, so prefer clipboard or a fixed/token path over forcing a pasted path; give optional fields a sensible default; avoid multiple heavy inputs.
 - [ ] Output mode matches how results are surfaced; results go to **stdout**.
 - [ ] Destructive or admin scripts have `[ConfirmBeforeRun('...')]` (and `[RequiresElevation()]` if needed).
 - [ ] Long-running scripts set a realistic `[ScriptTimeout(ms)]`.
