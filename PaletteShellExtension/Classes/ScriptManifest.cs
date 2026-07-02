@@ -13,6 +13,11 @@ public sealed class ScriptManifest
     public string? IconGlyph { get; set; }
 
     public bool? RequiresAdmin { get; set; }
+
+    // When set, running the script first prompts a confirmation dialog carrying this
+    // message. Pairs with RequiresAdmin to gate destructive scripts.
+    public string? ConfirmMessage { get; set; }
+
     public int? TimeoutMs { get; set; }
     public Dictionary<string, string> Env { get; set; } = [];
 

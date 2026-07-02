@@ -21,6 +21,25 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
 
     public override CommandResult Invoke()
     {
+        // Destructive scripts gate behind a confirmation dialog; only the dialog's
+        // primary command actually runs the script.
+        if (!string.IsNullOrWhiteSpace(_manifest.ConfirmMessage))
+        {
+            var scriptName = Path.GetFileNameWithoutExtension(path);
+            return CommandResult.Confirm(new ConfirmationArgs
+            {
+                Title = $"Run {scriptName}?",
+                Description = _manifest.ConfirmMessage,
+                PrimaryCommand = new CallbackCommand($"Run {scriptName}", RunNow),
+                IsPrimaryCommandCritical = true,
+            });
+        }
+
+        return RunNow();
+    }
+
+    private CommandResult RunNow()
+    {
         var wantsAdmin = _manifest.RequiresAdmin == true;
 
         // CWD

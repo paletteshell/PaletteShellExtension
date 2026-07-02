@@ -1,9 +1,11 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
+using PaletteShellExtension.Commands;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Forms;
 
@@ -15,6 +17,8 @@ internal sealed class ScriptParameterForm : FormContent
     private readonly string? _cwd;
     private readonly Dictionary<string, string> _env;
     private readonly Action<string>? _onMarkdown;
+    private readonly Action? _onRunStarted;
+    private readonly Action? _onRunFinished;
 
     public ScriptParameterForm(
         string scriptPath,
@@ -22,7 +26,9 @@ internal sealed class ScriptParameterForm : FormContent
         string? host = null,
         string? cwd = null,
         Dictionary<string, string>? env = null,
-        Action<string>? onMarkdown = null)
+        Action<string>? onMarkdown = null,
+        Action? onRunStarted = null,
+        Action? onRunFinished = null)
     {
 
         _scriptPath = scriptPath;
@@ -31,6 +37,8 @@ internal sealed class ScriptParameterForm : FormContent
         _cwd = cwd;
         _env = env ?? new(StringComparer.OrdinalIgnoreCase);
         _onMarkdown = onMarkdown;
+        _onRunStarted = onRunStarted;
+        _onRunFinished = onRunFinished;
 
         TemplateJson = BuildTemplateJson();
         DataJson = BuildDataJson();
@@ -65,6 +73,110 @@ internal sealed class ScriptParameterForm : FormContent
 
             var argsLine = string.Join(" ", args);
 
+            // Markdown output renders in place on this page, so run it asynchronously and show a
+            // "Running…" spinner while it works — a slow script (e.g. an event-log query) no
+            // longer leaves the form looking frozen. Other modes surface a quick toast and are
+            // typically instant, so they keep the simple synchronous path.
+            var runsInPage = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase)
+                && _onMarkdown is not null;
+
+            Func<CommandResult> run = runsInPage
+                ? () => StartMarkdownRun(argsLine)
+                : () => Execute(argsLine);
+
+            // Destructive scripts gate behind a confirmation dialog; only the dialog's
+            // primary command runs the script (with the values already collected here).
+            if (!string.IsNullOrWhiteSpace(_manifest.ConfirmMessage))
+            {
+                var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
+                return CommandResult.Confirm(new ConfirmationArgs
+                {
+                    Title = $"Run {scriptName}?",
+                    Description = _manifest.ConfirmMessage,
+                    PrimaryCommand = new CallbackCommand($"Run {scriptName}", run),
+                    IsPrimaryCommandCritical = true,
+                });
+            }
+
+            return run();
+        }
+        catch (Exception)
+        {
+            return CommandResult.GoBack();
+        }
+    }
+
+    /// <summary>Runs a Markdown-output script on a background thread so the UI thread isn't
+    /// blocked, signalling the page to show a "Running…" spinner while it works and rendering the
+    /// result (or an error) in place when it finishes.</summary>
+    private CommandResult StartMarkdownRun(string argsLine)
+    {
+        _onRunStarted?.Invoke();
+
+        _ = Task.Run(() =>
+        {
+            string body;
+            try
+            {
+                var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
+                var result = ScriptRunner.RunScriptAndWait(
+                    scriptPath: _scriptPath,
+                    args: argsLine,
+                    host: _host,
+                    cwd: _cwd,
+                    env: _env,
+                    requiresAdmin: false,
+                    timeoutMs: timeout);
+
+                body = FormatMarkdownResult(result);
+            }
+            catch (Exception ex)
+            {
+                body = $"**Error running script**\n\n```\n{ex.Message}\n```";
+            }
+
+            try
+            {
+                _onMarkdown!(body);
+            }
+            finally
+            {
+                _onRunFinished?.Invoke();
+            }
+        });
+
+        return CommandResult.KeepOpen();
+    }
+
+    /// <summary>Turns a run result into the Markdown body to render, mirroring the no-parameter
+    /// Markdown page: failures and empty output become a short note rather than a blank panel.</summary>
+    private static string FormatMarkdownResult(ScriptRunner.ScriptResult? result)
+    {
+        if (result is null)
+            return "_Failed to start script._";
+
+        if (result.TimedOut)
+            return "_Script timed out._";
+
+        if (result.ExitCode != 0)
+        {
+            var error = result.StandardError?.Trim();
+            return string.IsNullOrEmpty(error)
+                ? $"**Script failed with exit code {result.ExitCode}.**"
+                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
+        }
+
+        return string.IsNullOrWhiteSpace(result.StandardOutput)
+            ? "_Script completed with no output._"
+            : result.StandardOutput!;
+    }
+
+    /// <summary>Runs the script with the already-built argument line and turns its result into
+    /// a <see cref="CommandResult"/> per the declared output mode.</summary>
+    private CommandResult Execute(string argsLine)
+    {
+        try
+        {
             // Run script and wait for completion
             var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
             var result = ScriptRunner.RunScriptAndWait(
@@ -93,7 +205,7 @@ internal sealed class ScriptParameterForm : FormContent
                 return CommandResult.KeepOpen();
             }
 
-            // Clipboard / File / Toast / None are handled identically to the no-parameter path.
+            // Clipboard / File / Status / Toast / None are handled identically to the no-parameter path.
             return ScriptOutputHandler.ToResult(
                 _manifest.Output,
                 result.StandardOutput,

@@ -220,6 +220,11 @@ internal static partial class PowerShellScriptParser
                 case "RequiresElevation":
                     manifest.RequiresAdmin = true;
                     break;
+                case "ConfirmBeforeRun":
+                    manifest.ConfirmMessage = values.Count >= 1 && !string.IsNullOrWhiteSpace(values[0])
+                        ? values[0]
+                        : "Are you sure you want to run this script?";
+                    break;
                 case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
                     manifest.TimeoutMs = timeout;
                     break;
@@ -427,7 +432,7 @@ internal static partial class PowerShellScriptParser
         "ValidateDrive", "ValidateUserDrive", "AllowNull", "AllowEmptyString", "AllowExpression",
         "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
         "PSDefaultValue", "ArgumentCompleter",
-        "ScriptHost", "ScriptCwd", "RequiresElevation", "ScriptTimeout",
+        "ScriptHost", "ScriptCwd", "RequiresElevation", "ConfirmBeforeRun", "ScriptTimeout",
         "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptEnv"
     };
 

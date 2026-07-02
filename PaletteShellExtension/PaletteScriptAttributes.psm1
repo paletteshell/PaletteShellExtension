@@ -19,6 +19,14 @@ class ScriptCwdAttribute : Attribute {
 # Requires elevation (can also use built-in #Requires -RunAsAdministrator)
 class RequiresElevationAttribute : Attribute {}
 
+# Prompt for confirmation before running. Pairs with RequiresElevation to gate
+# destructive scripts, e.g. [ConfirmBeforeRun('This permanently deletes files')].
+class ConfirmBeforeRunAttribute : Attribute {
+    [string]$Message
+    ConfirmBeforeRunAttribute() { $this.Message = '' }
+    ConfirmBeforeRunAttribute([string]$message) { $this.Message = $message }
+}
+
 # Script timeout in milliseconds
 class ScriptTimeoutAttribute : Attribute {
     [int]$Milliseconds
@@ -27,9 +35,11 @@ class ScriptTimeoutAttribute : Attribute {
 
 # Output handling
 class ScriptOutputAttribute : Attribute {
-    # None, Toast, Clipboard, Markdown, File, or List.
+    # None, Toast, Clipboard, Markdown, Result, File, or List.
     # File writes stdout to a temp file and opens it in the editor; append an
     # extension hint after a colon to control the file type, e.g. 'File:csv' or 'File:json'.
+    # Result shows stdout as a single copyable result (Enter copies; a "Run again"
+    # command regenerates) — like a calculator answer; good for generators.
     # List parses stdout (newline-delimited, or a JSON array) into a searchable
     # results page where each line/object becomes a selectable item.
     [string]$Mode

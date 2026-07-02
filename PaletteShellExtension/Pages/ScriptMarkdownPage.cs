@@ -20,7 +20,9 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
     private readonly string _args;
 
     private readonly MarkdownContent _content = new();
-    private bool _started;
+
+    // A script run is in flight; ignore re-entrant content fetches while it is.
+    private bool _running;
 
     public ScriptMarkdownPage(
         string scriptPath,
@@ -46,10 +48,16 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
 
     public override IContent[] GetContent()
     {
-        // Kick off the script the first time the host asks for content; refresh when done.
-        if (!_started)
+        // The host fetches content each time the page is shown. Re-run the script on every
+        // navigation so the preview reflects current state instead of the first run's cached
+        // output. The in-flight guard keeps an incidental duplicate fetch from launching a
+        // second run; the result reaches the UI when MarkdownContent.Body changes raise
+        // PropChanged, so there's no need to raise ItemsChanged (doing so leaves the palette
+        // stuck showing its loading animation after the content has already updated).
+        if (!_running)
         {
-            _started = true;
+            _running = true;
+            IsLoading = true;
             _ = Task.Run(RunAndRender);
         }
 
@@ -82,7 +90,7 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
         finally
         {
             IsLoading = false;
-            RaiseItemsChanged();
+            _running = false;
         }
     }
 
