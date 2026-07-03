@@ -67,8 +67,9 @@ internal sealed partial class NewScriptWizardForm : FormContent
       "id": "host",
       "label": "Host",
       "style": "compact",
-      "value": "pwsh",
+      "value": "default",
       "choices": [
+        { "title": "Use default (from Settings)", "value": "default" },
         { "title": "PowerShell 7 (pwsh)", "value": "pwsh" },
         { "title": "Windows PowerShell 5.1", "value": "powershell" }
       ]
@@ -76,8 +77,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
     {
       "type": "Input.Number",
       "id": "timeout",
-      "label": "Timeout (ms)",
-      "value": 20000,
+      "label": "Timeout (ms) — leave blank to use the default from Settings",
       "min": 1000,
       "max": 600000
     },
@@ -136,7 +136,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
             Group: formInput["group"]?.ToString()?.Trim(),
             Icon: formInput["icon"]?.ToString()?.Trim(),
             Output: formInput["output"]?.ToString()?.Trim(),
-            Host: formInput["host"]?.ToString()?.Trim(),
+            Host: ParseHost(formInput["host"]?.ToString()),
             TimeoutMs: ParseTimeout(formInput["timeout"]?.ToString()),
             RequiresElevation: (formInput["elevate"]?.ToString() ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase),
             ConfirmMessage: formInput["confirm"]?.ToString()?.Trim());
@@ -165,12 +165,28 @@ internal sealed partial class NewScriptWizardForm : FormContent
         }
     }
 
-    private static int ParseTimeout(string? raw)
+    // Null means "no override" — the generated script omits [ScriptHost(...)] and falls
+    // back to the global default host setting at runtime.
+    private static string? ParseHost(string? raw)
     {
-        const int Default = 20000, Min = 1000, Max = 600_000;
-        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < Min)
-            return Default;
-        return Math.Min(value, Max);
+        var trimmed = raw?.Trim();
+        return string.IsNullOrEmpty(trimmed) || string.Equals(trimmed, "default", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : trimmed;
+    }
+
+    // Null means "no override" — the generated script omits [ScriptTimeout(...)] and falls
+    // back to the global default timeout setting at runtime.
+    private static int? ParseTimeout(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        const int Min = 1000, Max = 600_000;
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+            return null;
+
+        return Math.Clamp(value, Min, Max);
     }
 
     /// <summary>Collected wizard answers that shape the generated attribute block and body.</summary>
@@ -180,7 +196,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
         string? Icon,
         string? Output,
         string? Host,
-        int TimeoutMs,
+        int? TimeoutMs,
         bool RequiresElevation,
         string? ConfirmMessage);
 
@@ -237,8 +253,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
         sb.Append(".DESCRIPTION\n    ").Append(description).Append('\n');
         sb.Append("#>\n");
 
-        var host = string.IsNullOrWhiteSpace(options.Host) ? "pwsh" : options.Host;
-        sb.Append(CultureInfo.InvariantCulture, $"[ScriptHost('{host}')]\n");
+        // Omitted entirely when the user didn't override it, so the script picks up the
+        // global default host setting at runtime instead of freezing in today's value.
+        if (!string.IsNullOrWhiteSpace(options.Host))
+            sb.Append(CultureInfo.InvariantCulture, $"[ScriptHost('{options.Host}')]\n");
 
         var group = string.IsNullOrWhiteSpace(options.Group) ? "General" : options.Group;
         sb.Append(CultureInfo.InvariantCulture, $"[ScriptGroup('{EscapeSingleQuoted(group)}')]\n");
@@ -252,7 +270,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
         if (!string.IsNullOrWhiteSpace(options.ConfirmMessage))
             sb.Append(CultureInfo.InvariantCulture, $"[ConfirmBeforeRun('{EscapeSingleQuoted(options.ConfirmMessage)}')]\n");
 
-        sb.Append(CultureInfo.InvariantCulture, $"[ScriptTimeout({options.TimeoutMs})]\n");
+        // Omitted entirely when the user didn't override it, so the script picks up the
+        // global default timeout setting at runtime instead of freezing in today's value.
+        if (options.TimeoutMs is { } timeoutMs)
+            sb.Append(CultureInfo.InvariantCulture, $"[ScriptTimeout({timeoutMs})]\n");
 
         var output = string.IsNullOrWhiteSpace(options.Output) ? "None" : options.Output;
         sb.Append(CultureInfo.InvariantCulture, $"[ScriptOutput('{output}')]\n");

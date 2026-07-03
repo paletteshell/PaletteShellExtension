@@ -4,6 +4,7 @@
 
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using PaletteShellExtension.Classes;
 
 namespace PaletteShellExtension;
 
@@ -15,6 +16,7 @@ public partial class PaletteShellExtensionCommandsProvider : CommandProvider
     {
         DisplayName = "PaletteShell";
         Icon = IconHelpers.FromRelativePath("Assets\\StoreLogo.png");
+        Settings = PaletteShellSettingsManager.Instance.Settings;
         _commands = [
             new CommandItem(new PaletteShellExtensionPage()) { Title = DisplayName, Subtitle = "Run your PowerShell scripts" },
         ];

@@ -33,7 +33,7 @@ internal sealed class ScriptParameterForm : FormContent
 
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? "pwsh";
+        _host = host ?? PaletteShellSettingsManager.Instance.DefaultHost;
         _cwd = cwd;
         _env = env ?? new(StringComparer.OrdinalIgnoreCase);
         _onMarkdown = onMarkdown;
@@ -132,7 +132,7 @@ internal sealed class ScriptParameterForm : FormContent
             string body;
             try
             {
-                var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
+                var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
                 var result = ScriptRunner.RunScriptAndWait(
                     scriptPath: _scriptPath,
                     args: argsLine,
@@ -192,7 +192,7 @@ internal sealed class ScriptParameterForm : FormContent
         try
         {
             // Run script and wait for completion
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
+            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
             var result = ScriptRunner.RunScriptAndWait(
                 scriptPath: _scriptPath,
                 args: argsLine,

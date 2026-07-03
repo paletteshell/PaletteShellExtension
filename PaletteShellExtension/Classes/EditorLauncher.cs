@@ -18,7 +18,8 @@ internal static class EditorLauncher
 
     public static void Open(string path)
     {
-        var editor = Environment.GetEnvironmentVariable("VISUAL")
+        var editor = PaletteShellSettingsManager.Instance.PreferredEditor
+                 ?? Environment.GetEnvironmentVariable("VISUAL")
                  ?? Environment.GetEnvironmentVariable("EDITOR")
                  ?? "notepad.exe";
         Process.Start(new ProcessStartInfo(editor, $"\"{path}\"") { UseShellExecute = true });

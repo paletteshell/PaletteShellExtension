@@ -52,7 +52,7 @@ public class NewScriptWizardFormTests
     }
 
     [Fact]
-    public void SubmitForm_OmittedOptions_FallBackToDefaults()
+    public void SubmitForm_OmittedOptions_OmitHostAndTimeoutForRuntimeDefaults()
     {
         var root = Directory.CreateTempSubdirectory("pswizard-").FullName;
         try
@@ -65,7 +65,10 @@ public class NewScriptWizardFormTests
             Assert.NotNull(manifest);
             Assert.Equal("General", manifest!.Group);
             Assert.Equal("None", manifest.Output);
-            Assert.Equal(20000, manifest.TimeoutMs);
+            // Host/timeout are left unset in the file itself, so the script picks up
+            // whatever the global default settings are at run time.
+            Assert.Null(manifest.Host);
+            Assert.Null(manifest.TimeoutMs);
             Assert.Null(manifest.RequiresAdmin);
             Assert.Null(manifest.ConfirmMessage);
         }
@@ -76,7 +79,7 @@ public class NewScriptWizardFormTests
     }
 
     [Fact]
-    public void SubmitForm_TimeoutBelowMinimum_FallsBackToDefault()
+    public void SubmitForm_TimeoutBelowMinimum_ClampsToMinimum()
     {
         var root = Directory.CreateTempSubdirectory("pswizard-").FullName;
         try
@@ -86,7 +89,26 @@ public class NewScriptWizardFormTests
 
             var manifest = PowerShellScriptParser.TryParseManifest(Path.Combine(root, "BadTimeout.ps1"));
 
-            Assert.Equal(20000, manifest!.TimeoutMs);
+            Assert.Equal(1000, manifest!.TimeoutMs);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SubmitForm_HostDefault_OmitsScriptHostAttribute()
+    {
+        var root = Directory.CreateTempSubdirectory("pswizard-").FullName;
+        try
+        {
+            var form = new NewScriptWizardForm(root);
+            form.SubmitForm("""{"name":"DefaultHost","host":"default","open":"false"}""", """{"verb":"create"}""");
+
+            var manifest = PowerShellScriptParser.TryParseManifest(Path.Combine(root, "DefaultHost.ps1"));
+
+            Assert.Null(manifest!.Host);
         }
         finally
         {

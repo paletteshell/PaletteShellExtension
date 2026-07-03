@@ -13,9 +13,6 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
 {
     private readonly ScriptManifest _manifest = manifest ?? new ScriptManifest();
 
-    // Used when a script must be waited on to honor its output mode but declared no timeout.
-    private const int DefaultTimeoutMs = 30000;
-
     public override string Name => $"Run {Path.GetFileNameWithoutExtension(path)}";
     public override IconInfo Icon => new(_manifest.IconGlyph ?? ""); // Play; or map emoji Icon if you like
 
@@ -63,7 +60,7 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
             ScriptRunner.RunScript(
                 scriptPath: path,
                 args: "",
-                host: _manifest.Host ?? "pwsh",
+                host: _manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
                 cwd: cwd,
                 env: expandedEnv);
             return CommandResult.ShowToast("Script completed");
@@ -74,11 +71,11 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         var result = ScriptRunner.RunScriptAndWait(
             scriptPath: path,
             args: "",
-            host: _manifest.Host ?? "pwsh",
+            host: _manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
             cwd: cwd,
             env: expandedEnv,
             requiresAdmin: wantsAdmin,
-            timeoutMs: timeout ?? DefaultTimeoutMs);
+            timeoutMs: timeout ?? PaletteShellSettingsManager.Instance.DefaultTimeoutMs);
 
         if (result == null)
             return CommandResult.ShowToast("Error: Process.Start returned null");

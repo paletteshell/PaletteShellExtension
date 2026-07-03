@@ -20,8 +20,12 @@ namespace PaletteShellExtension;
 
 internal sealed partial class PaletteShellExtensionPage : ListPage
 {
-    private readonly string _rootDirectory;
-    private readonly PinnedScripts _pins;
+    private static readonly string SuggestedDefaultFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        "PaletteShellScripts");
+
+    private string? _rootDirectory;
+    private PinnedScripts? _pins;
     private List<string> _files = [];
     private IListItem[]? _cachedItems;
 
@@ -31,28 +35,77 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         Title = "PaletteShell";
         Name = "PaletteShell";
 
-        _rootDirectory = Path.Combine(
-           Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-           "PaletteShellScripts");
+        var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
+        if (configuredFolder is null && Directory.Exists(SuggestedDefaultFolder))
+        {
+            // Upgrading from a version that predates this setting: the well-known default
+            // folder already exists (with the user's scripts and pins in it), so adopt it
+            // silently instead of prompting someone who's already set up.
+            PaletteShellSettingsManager.Instance.ScriptsFolder = SuggestedDefaultFolder;
+            configuredFolder = SuggestedDefaultFolder;
+        }
 
-        Directory.CreateDirectory(_rootDirectory);
-        _pins = new PinnedScripts(_rootDirectory);
-        CopySampleScripts();
+        if (configuredFolder is not null)
+        {
+            InitializeFolder(configuredFolder);
+        }
+        // Else: genuinely first run, no folder configured and no pre-existing default folder
+        // — GetItems() prompts for one instead of silently defaulting, and InitializeFolder
+        // runs once the user picks one.
+    }
+
+    // Points the page at the given folder, creating it and copying in the sample scripts and
+    // supporting module/docs, then scanning it. Runs both on normal startup (folder already
+    // configured) and once the first-run setup form or "Reload scripts" picks up a new folder.
+    private void InitializeFolder(string folder)
+    {
+        _rootDirectory = folder;
+        Directory.CreateDirectory(folder);
+        _pins = new PinnedScripts(folder);
+        CopySampleScripts(folder);
         RefreshFiles();
 
         // The module/docs/dll files copied here are never *.ps1 files, so RefreshFiles()
         // never picks them up and they can't affect what GetItems() shows — safe to push
         // off the constructor's critical path instead of blocking the first render on them.
-        _ = Task.Run(CopyPowerShellModule);
+        _ = Task.Run(() => CopyPowerShellModule(folder));
+    }
+
+    // Called by the setup form once the user chooses a folder for the first time.
+    private void HandleFolderConfigured(string folder)
+    {
+        InitializeFolder(folder);
+        RaiseItemsChanged();
     }
 
     /// <summary>Rescans the scripts folder and refreshes the list. Returns the number of
-    /// .ps1 scripts found so callers (e.g. the Reload command) can confirm completion.</summary>
+    /// .ps1 scripts found so callers (e.g. the Reload command) can confirm completion.
+    /// Also picks up a folder changed via the settings page since the page was built.</summary>
     public int RefreshFiles()
     {
         _cachedItems = null; // Clear cache
 
-        var files = Directory.GetFiles(_rootDirectory, "*.ps1", SearchOption.TopDirectoryOnly);
+        if (_rootDirectory is null)
+        {
+            return 0;
+        }
+
+        // The folder may have been repointed via the settings page since this page was
+        // built (or since the last reload) — re-derive it here so "Reload scripts" is the
+        // single, explicit action that picks up a relocation, consistent with how it's
+        // already the single action that picks up new/edited scripts.
+        var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
+        if (configuredFolder is not null && !string.Equals(configuredFolder, _rootDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            _rootDirectory = configuredFolder;
+            Directory.CreateDirectory(configuredFolder);
+            _pins = new PinnedScripts(configuredFolder);
+            CopySampleScripts(configuredFolder);
+            _ = Task.Run(() => CopyPowerShellModule(configuredFolder));
+        }
+
+        var rootDirectory = _rootDirectory;
+        var files = Directory.GetFiles(rootDirectory, "*.ps1", SearchOption.TopDirectoryOnly);
         _files = [.. files];
 
         // Use the page's change notification so CmdPal asks for items again.
@@ -61,7 +114,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         return _files.Count;
     }
 
-    private void CopySampleScripts()
+    private static void CopySampleScripts(string root)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var resourceNames = assembly.GetManifestResourceNames()
@@ -71,7 +124,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         foreach (var resourceName in resourceNames)
         {
             var fileName = resourceName.Split('.').Reverse().Skip(1).First() + ".ps1";
-            var targetPath = Path.Combine(_rootDirectory, fileName);
+            var targetPath = Path.Combine(root, fileName);
 
             // Only copy if the file doesn't exist (don't overwrite user modifications)
             if (!File.Exists(targetPath))
@@ -94,13 +147,13 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         }
     }
 
-    private void CopyPowerShellModule()
+    private static void CopyPowerShellModule(string root)
     {
         var baseDir = AppContext.BaseDirectory;
 
         // Copy the PowerShell module
         var moduleSourcePath = Path.Combine(baseDir, "PaletteScriptAttributes.psm1");
-        var moduleTargetPath = Path.Combine(_rootDirectory, "PaletteScriptAttributes.psm1");
+        var moduleTargetPath = Path.Combine(root, "PaletteScriptAttributes.psm1");
 
         if (File.Exists(moduleSourcePath))
         {
@@ -117,7 +170,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         // Copy the agent-facing authoring spec so tools pointed at the scripts folder discover
         // the script contract. Best-effort and always refreshed to stay in sync with the extension.
         var agentsSourcePath = Path.Combine(baseDir, "AGENTS.md");
-        var agentsTargetPath = Path.Combine(_rootDirectory, "AGENTS.md");
+        var agentsTargetPath = Path.Combine(root, "AGENTS.md");
 
         if (File.Exists(agentsSourcePath))
         {
@@ -133,7 +186,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         // Copy TextCopy.dll and its dependencies so PowerShell can load it
         var textCopySource = Path.Combine(baseDir, "TextCopy.dll");
-        var textCopyTarget = Path.Combine(_rootDirectory, "TextCopy.dll");
+        var textCopyTarget = Path.Combine(root, "TextCopy.dll");
 
         if (File.Exists(textCopySource))
         {
@@ -167,15 +220,29 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
     public override IListItem[] GetItems()
     {
+        if (_rootDirectory is not { } rootDirectory || _pins is not { } pins)
+        {
+            // First run - no folder configured yet. Prompt for one instead of silently
+            // defaulting; everything else (samples, module, script scan) waits for it.
+            return
+            [
+                new ListItem(new ScriptsFolderSetupPage(SuggestedDefaultFolder, HandleFolderConfigured))
+                {
+                    Title = "Choose scripts folder",
+                    Subtitle = "Pick where PaletteShell should look for your .ps1 scripts",
+                },
+            ];
+        }
+
         if (_cachedItems != null)
         {
             return _cachedItems;
         }
 
         List<IListItem> items = [
-            new ListItem(new OpenFolderCommand(_rootDirectory)) { Title = "Open scripts folder" },
+            new ListItem(new OpenFolderCommand(rootDirectory)) { Title = "Open scripts folder" },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
-            new ListItem(new NewScriptWizardPage(_rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
+            new ListItem(new NewScriptWizardPage(rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
             new ListItem(new OpenLinkCommand("Find more scripts", "https://github.com/paletteshell/PaletteShellScripts", "")) { Title = "Find more scripts", Subtitle = "Browse the PaletteShellScripts repository on GitHub" },
         ];
 
@@ -214,7 +281,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     command = new ScriptListPage(
                         scriptPath: path,
                         manifest: manifest,
-                        host: manifest.Host ?? "pwsh",
+                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
                         cwd: resolvedCwd,
                         env: manifest.Env);
                 }
@@ -226,7 +293,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     var formPage = new ScriptParameterFormPage(
                         scriptPath: path,
                         manifest: manifest,
-                        host: manifest.Host ?? "pwsh",
+                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
                         cwd: resolvedCwd,
                         env: manifest.Env
                     );
@@ -242,7 +309,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     command = new ScriptMarkdownPage(
                         scriptPath: path,
                         manifest: manifest,
-                        host: manifest.Host ?? "pwsh",
+                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
                         cwd: resolvedCwd,
                         env: manifest.Env);
                 }
@@ -256,7 +323,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     command = new ScriptResultPage(
                         scriptPath: path,
                         manifest: manifest,
-                        host: manifest.Host ?? "pwsh",
+                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
                         cwd: resolvedCwd,
                         env: manifest.Env);
                 }
@@ -268,7 +335,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
                 var group = manifest?.Group;
 
-                var pinned = _pins.IsPinned(path);
+                var pinned = pins.IsPinned(path);
 
                 var listItem = new ListItem(command)
                 {
@@ -278,7 +345,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                         ? new IconInfo(manifest.IconGlyph)
                         : DefaultScriptIcon,
                     Tags = BuildTags(pinned, group),
-                    MoreCommands = BuildContextCommands(path)
+                    MoreCommands = BuildContextCommands(path, pins)
                 };
 
                 scriptResults[i] = (pinned, title, listItem);
@@ -289,7 +356,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 // dropping the script silently, surface it with an error hint so the user can
                 // find it, open it to fix, or remove it — instead of wondering where it went.
                 Log.Warn($"Failed to build list item for '{path}': {ex.Message}");
-                var pinned = _pins.IsPinned(path);
+                var pinned = pins.IsPinned(path);
                 var errorTitle = Path.GetFileNameWithoutExtension(path);
                 scriptResults[i] = (pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
                 {
@@ -297,7 +364,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
                     Icon = new IconInfo(""), // Warning
                     Tags = BuildTags(pinned, null),
-                    MoreCommands = BuildContextCommands(path)
+                    MoreCommands = BuildContextCommands(path, pins)
                 });
             }
         });
@@ -319,9 +386,9 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     private static readonly IconInfo DefaultScriptIcon = new(""); // CommandPrompt
 
     // Per-script context menu shared by normal and error entries: pin, open, reveal, delete.
-    private CommandContextItem[] BuildContextCommands(string path) =>
+    private CommandContextItem[] BuildContextCommands(string path, PinnedScripts pins) =>
     [
-        new CommandContextItem(new TogglePinCommand(path, _pins, () => RefreshFiles())),
+        new CommandContextItem(new TogglePinCommand(path, pins, () => RefreshFiles())),
         new CommandContextItem(new OpenInEditorCommand(path)),
         new CommandContextItem(new RevealInExplorerCommand(path)),
         new CommandContextItem(new DeleteScriptCommand(path, () => RefreshFiles())),

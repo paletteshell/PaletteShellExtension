@@ -41,7 +41,7 @@ internal sealed partial class ScriptResultPage : ListPage
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? manifest.Host ?? "pwsh";
+        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
         _cwd = cwd;
         _env = env ?? new(StringComparer.OrdinalIgnoreCase);
 
@@ -82,7 +82,7 @@ internal sealed partial class ScriptResultPage : ListPage
     {
         try
         {
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
+            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
 
             // Elevated scripts can't have their output captured, so Result mode always runs
             // unelevated — there'd be no value to show otherwise.
