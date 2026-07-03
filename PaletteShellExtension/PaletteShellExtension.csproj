@@ -39,33 +39,18 @@
     <ItemGroup>
       <TextCopySource Include="$(NuGetPackageRoot)textcopy\**\lib\netstandard2.0\TextCopy.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(TextCopySource)" 
-          DestinationFolder="$(OutDir)" 
-          SkipUnchangedFiles="true"
-          Condition="'@(TextCopySource)' != ''" />
+    <Copy SourceFiles="@(TextCopySource)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(TextCopySource)' != ''" />
     <Message Importance="High" Text="Copied TextCopy.dll to output: @(TextCopySource)" Condition="'@(TextCopySource)' != ''" />
   </Target>
   
   <Target Name="PrepareAssets" BeforeTargets="BeforeBuild">
     <!-- Copy scale-specific assets to base filenames expected by store validations -->
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.png"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\SmallTile.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\SmallTile.png"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\Wide310x150Logo.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\Wide310x150Logo.png"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\SplashScreen.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\SplashScreen.png"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\LargeTile.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\LargeTile.png"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\StoreLogo.scale-100.png"
-          DestinationFiles="$(MSBuildProjectDirectory)\Assets\StoreLogo.png"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.png" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\SmallTile.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\SmallTile.png" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\Wide310x150Logo.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\Wide310x150Logo.png" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\SplashScreen.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\SplashScreen.png" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\LargeTile.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\LargeTile.png" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\StoreLogo.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\StoreLogo.png" SkipUnchangedFiles="true" />
   </Target>
   
   <ItemGroup>
