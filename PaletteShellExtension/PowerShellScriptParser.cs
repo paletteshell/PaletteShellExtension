@@ -94,8 +94,9 @@ internal static partial class PowerShellScriptParser
 
             return manifest;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Warn($"Failed to parse manifest for '{ps1Path}': {ex.Message}");
             return null;
         }
     }
@@ -247,7 +248,18 @@ internal static partial class PowerShellScriptParser
                     manifest.Group = values[0];
                     break;
                 case "ScriptIcon" when values.Count >= 1:
-                    manifest.IconGlyph = values[0];
+                    if (string.IsNullOrEmpty(values[0]))
+                    {
+                        // Explicit empty glyph is a no-op, same as omitting the attribute.
+                    }
+                    else if (IsValidIconGlyph(values[0]))
+                    {
+                        manifest.IconGlyph = values[0];
+                    }
+                    else
+                    {
+                        Log.Warn($"Ignoring invalid ScriptIcon value {EscapeForLog(values[0])} (expected a single glyph)");
+                    }
                     break;
                 case "ScriptEnv" when values.Count >= 2:
                     manifest.Env[values[0]] = values[1];
@@ -652,6 +664,40 @@ internal static partial class PowerShellScriptParser
         var name = group[..open].Trim();
         var args = ExtractBalanced(group, open, '(', ')');
         return (name, args);
+    }
+
+    /// <summary>
+    /// True when <paramref name="glyph"/> looks like a single icon glyph rather than a word
+    /// or sentence someone mistakenly passed to <c>[ScriptIcon(...)]</c>. Accepts both a lone
+    /// Segoe Fluent/MDL2 PUA codepoint and a multi-codepoint emoji sequence (skin tone
+    /// modifiers, ZWJ joins, flags), since those combine into a single rendered glyph even
+    /// though they span several <c>char</c>s.
+    /// </summary>
+    private static bool IsValidIconGlyph(string glyph)
+    {
+        if (string.IsNullOrEmpty(glyph) || glyph.Length > 32)
+        {
+            return false;
+        }
+
+        foreach (var c in glyph)
+        {
+            if (char.IsControl(c) || char.IsWhiteSpace(c))
+            {
+                return false;
+            }
+        }
+
+        return new StringInfo(glyph).LengthInTextElements == 1;
+    }
+
+    /// <summary>Renders a string safely for a log line: escapes control characters and caps length.</summary>
+    private static string EscapeForLog(string value)
+    {
+        const int max = 40;
+        var truncated = value.Length > max ? value[..max] + "…" : value;
+        return "'" + truncated.Replace("\\", "\\\\").Replace("'", "\\'")
+            .Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t") + "'";
     }
 
     /// <summary>Trims one matching pair of surrounding quotes and unescapes doubled quotes.</summary>

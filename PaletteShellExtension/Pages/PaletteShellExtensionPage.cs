@@ -82,9 +82,9 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                         File.WriteAllText(targetPath, content, new UTF8Encoding(false));
                     }
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // Skip scripts that fail to copy.
+                    Log.Warn($"Failed to copy sample script '{fileName}': {ex.Message}");
                 }
             }
         }
@@ -104,9 +104,9 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             {
                 File.Copy(moduleSourcePath, moduleTargetPath, overwrite: true);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Module copy is best-effort.
+                Log.Warn($"Failed to copy PaletteScriptAttributes.psm1 to scripts folder: {ex.Message}");
             }
         }
 
@@ -256,11 +256,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
                 scriptItems.Add((pinned, title, listItem));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // Building the rich entry failed (e.g. a malformed parameter block). Rather than
                 // dropping the script silently, surface it with an error hint so the user can
                 // find it, open it to fix, or remove it — instead of wondering where it went.
+                Log.Warn($"Failed to build list item for '{path}': {ex.Message}");
                 var pinned = _pins.IsPinned(path);
                 var errorTitle = Path.GetFileNameWithoutExtension(path);
                 scriptItems.Add((pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))

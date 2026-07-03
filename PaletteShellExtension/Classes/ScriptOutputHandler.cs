@@ -50,9 +50,9 @@ internal static class ScriptOutputHandler
         {
             TextCopy.ClipboardService.SetText(text ?? "");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Clipboard access can fail; ignore and continue.
+            Log.Warn($"Failed to set clipboard text: {ex.Message}");
         }
     }
 }

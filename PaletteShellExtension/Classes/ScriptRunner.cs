@@ -195,8 +195,9 @@ internal static class ScriptRunner
             using var proc = Process.Start(psi);
             return proc is not null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Error($"Failed to launch script '{scriptPath}'", ex);
             return false;
         }
     }
@@ -257,6 +258,7 @@ internal static class ScriptRunner
             if (timeoutMs.HasValue && !proc.WaitForExit(timeoutMs.Value))
             {
                 result.TimedOut = true;
+                Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed");
                 try { proc.Kill(entireProcessTree: true); }
                 catch (Exception)
                 {
@@ -279,10 +281,15 @@ internal static class ScriptRunner
             result.StandardOutput = AwaitRead(stdoutTask);
             result.StandardError = AwaitRead(stderrTask);
             result.ExitCode = proc.ExitCode;
+            if (result.ExitCode != 0)
+            {
+                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}");
+            }
             return result;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Error($"Failed to run script '{scriptPath}'", ex);
             return null;
         }
         finally
