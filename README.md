@@ -316,7 +316,8 @@ For more, browse the community library at **[paletteshell/PaletteShellScripts](h
 
 ## 🛠️ Building from Source
 
-PaletteShell is a .NET 9 Windows app packaged as an MSIX Command Palette extension.
+PaletteShell is a .NET 9 Windows app packaged as an MSIX Command Palette extension. For running
+tests, sideloading, and debugging the extension itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Requirements**
 
