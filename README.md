@@ -10,7 +10,6 @@
 
 - **🚀 Quick Access**: Run PowerShell scripts directly from the Windows Command Palette
 - **📋 Clipboard Utilities**: Transform and manipulate clipboard text with one keystroke
-- **🔧 Customizable**: Drop your own `.ps1` files into a folder and they show up automatically
 - **📝 Parameter Support**: Scripts with parameters get an interactive input form, generated from the script's own `param()` block
 - **🎨 Rich Metadata**: Organize scripts with icons, descriptions, groups, and tags via PowerShell attributes
 - **📄 Markdown Output**: Render a script's output as formatted Markdown inside the palette
@@ -23,12 +22,14 @@
 - **⚡ Cross-Platform PowerShell**: Supports both PowerShell Core (`pwsh`) and Windows PowerShell (`powershell`)
 - **🤖 AI-Ready**: Ships an `AGENTS.md` authoring spec into your scripts folder so AI coding agents can write compliant scripts for you on the fly
 - **🔒 Security**: Runs in user context with optional admin elevation and an optional confirmation prompt per script
+- **📁 Configurable Scripts Folder**: Choose where your scripts live the first time you open PaletteShell (or change it later from Settings) instead of being locked to one fixed folder
+- **⚙️ Settings**: Set a default script host, default timeout, and preferred editor from PaletteShell's built-in Settings page
 
 ## 📖 Overview
 
 PaletteShell turns a folder of PowerShell scripts into searchable, runnable commands inside the Windows Command Palette. Each `.ps1` file becomes a list item: PaletteShell reads metadata out of the script (its synopsis, description, icon, parameters, and behavior attributes) and presents it with a friendly title and subtitle. Selecting an item either runs the script immediately or — if the script declares parameters — opens a form to collect input first.
 
-Scripts live in **`Documents\PaletteShellScripts`**. This folder is created automatically the first time the extension loads, and a set of ready-to-use sample scripts plus the supporting `PaletteScriptAttributes.psm1` module are copied in for you. Add, edit, or remove files in that folder at any time; use **"Reload scripts"** in the palette to pick up changes.
+The first time you open PaletteShell it asks which folder to use for your scripts, suggesting **`Documents\PaletteShellScripts`**. Accept the suggestion or pick your own (e.g. a folder synced across machines); PaletteShell creates it and copies in a set of ready-to-use sample scripts plus the supporting `PaletteScriptAttributes.psm1` module. If you already used PaletteShell before this prompt existed, your existing `Documents\PaletteShellScripts` folder is picked up automatically — no prompt, nothing to redo. Add, edit, or remove files in your scripts folder at any time; use **"Reload scripts"** in the palette to pick up changes (this also picks up a folder you've changed from [Settings](#-settings)).
 
 ## ⚙️ How It Works
 
@@ -36,14 +37,15 @@ Scripts live in **`Documents\PaletteShellScripts`**. This folder is created auto
 
 When the extension is activated, `PaletteShellExtensionPage` does the following:
 
-1. Creates the `Documents\PaletteShellScripts` directory if it doesn't exist.
-2. Copies the embedded sample scripts (only files that aren't already there, so your edits are never overwritten).
-3. Copies the `PaletteScriptAttributes.psm1` module and `TextCopy.dll` next to the scripts so they're available at runtime.
-4. Enumerates every `*.ps1` file in the folder (top level only) and builds the command list.
+1. Resolves the scripts folder: the one saved in [Settings](#-settings), or — for an install that predates that setting — the existing `Documents\PaletteShellScripts` if it's already there. If neither exists yet, the page shows a **"Choose scripts folder"** prompt (suggesting `Documents\PaletteShellScripts`) instead of a script list, and the rest of this flow runs once you submit it.
+2. Creates that directory if it doesn't exist.
+3. Copies the embedded sample scripts (only files that aren't already there, so your edits are never overwritten).
+4. Copies the `PaletteScriptAttributes.psm1` module and `TextCopy.dll` next to the scripts so they're available at runtime.
+5. Enumerates every `*.ps1` file in the folder (top level only) and builds the command list.
 
 The list always begins with four built-in actions:
 
-- **Open scripts folder** — opens `Documents\PaletteShellScripts` in Explorer.
+- **Open scripts folder** — opens your configured scripts folder in Explorer.
 - **Reload scripts** — re-scans the folder so new or changed scripts appear.
 - **Create new script** — opens a guided wizard that scaffolds a new `.ps1` with metadata headers.
 - **Find more scripts** — opens the community [PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts) repository in your browser.
@@ -93,7 +95,7 @@ Whether PaletteShell waits for the script depends on its output mode and timeout
 | Condition | Behavior |
 |-----------|----------|
 | `[ScriptOutput('None')]` and no `[ScriptTimeout]` | Fire-and-forget — the process is started and a "Script completed" toast is shown. |
-| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`Result`/`List`/`File`) | PaletteShell waits (up to the declared timeout, or a 30s default), captures stdout/stderr, and surfaces the result. |
+| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`Result`/`List`/`File`) | PaletteShell waits (up to the declared timeout, or the [default timeout setting](#-settings), 30s unless changed), captures stdout/stderr, and surfaces the result. |
 | `[ScriptTimeout(ms)]` set | PaletteShell waits up to `ms`, then kills the process tree on timeout. |
 | `[ScriptOutput('Clipboard')]` | Captured output is copied to the clipboard. |
 | `[ScriptOutput('Markdown')]` | Captured output is rendered as Markdown on its own page. |
@@ -109,18 +111,32 @@ The bundled `PaletteScriptAttributes.psm1` module exposes `Get-ClipboardText` / 
 
 ### Pinning
 
-Use a script item's **Pin to top** context command to keep it above the rest of the list; **Unpin** puts it back. Pinning is a per-user UI preference, so it lives outside the `.ps1` files — toggling a pin never rewrites your script. The pinned set is stored in a plain `pinned.txt` alongside your scripts (one entry per line, keyed by the script's path relative to the scripts folder), so it survives reloads and restarts and travels with the folder if you sync or copy it. Renaming or moving a script simply orphans its old pin, which is harmless.
+Use a script item's **Pin to top** context command to keep it above the rest of the list; **Unpin** puts it back. Pinning is a per-user UI preference, so it lives outside the `.ps1` files — toggling a pin never rewrites your script. The pinned set is stored in a plain `pinned.txt` alongside your scripts (one entry per line, keyed by the script's path relative to the scripts folder), so it survives reloads and restarts and travels with the folder if you sync or copy it. Renaming or moving a script simply orphans its old pin, which is harmless. Pointing PaletteShell at a **different** scripts folder (see [Settings](#-settings)) works the same way: it's a fresh folder, so it starts with nothing pinned — just re-pin what you need there.
+
+## ⚙️ Settings
+
+PaletteShell's top-level command has a built-in **Settings** page (the gear icon next to it in the Command Palette) with:
+
+| Setting | Purpose |
+|---------|---------|
+| **Scripts folder** | Where PaletteShell looks for `.ps1` scripts. Changing this doesn't move your existing scripts or `pinned.txt` — run **"Reload scripts"** afterward to point PaletteShell at the new folder. |
+| **Default script host** | `Auto` (recommended), `PowerShell 7 (pwsh)`, or `Windows PowerShell 5.1` — used for any script that doesn't declare its own `[ScriptHost(...)]`. |
+| **Default timeout** | Milliseconds to wait for a script that doesn't declare its own `[ScriptTimeout(...)]` before treating it as timed out. |
+| **Preferred editor** | Command or path used by **"Open in editor"**. Leave blank to fall back to `$VISUAL`, then `$EDITOR`, then Notepad. |
+
+These are extension-wide defaults, not per-script overrides — a script's own `[ScriptHost(...)]`/`[ScriptTimeout(...)]` attributes always win when present. The **"Create new script"** wizard's Host and Timeout fields default to **"Use default (from Settings)"**, so scaffolded scripts pick up whatever you've configured here instead of freezing in a fixed value, unless you explicitly choose otherwise in the wizard.
 
 ## 🚀 Getting Started
 
 1. Install the extension (from the Microsoft Store, or by building and deploying the MSIX package — see [Building](#-building-from-source)).
 2. Open the Command Palette and type **PaletteShell**.
-3. Browse the bundled sample scripts, choose **Create new script** to scaffold your own, or **Find more scripts** to grab one from the [community repo](https://github.com/paletteshell/PaletteShellScripts).
-4. Edit your scripts in `Documents\PaletteShellScripts` and run **Reload scripts** to see changes.
+3. The first time, choose a scripts folder (or accept the suggested `Documents\PaletteShellScripts`).
+4. Browse the bundled sample scripts, choose **Create new script** to scaffold your own, or **Find more scripts** to grab one from the [community repo](https://github.com/paletteshell/PaletteShellScripts).
+5. Edit your scripts in your scripts folder and run **Reload scripts** to see changes.
 
 ## ✍️ Creating Your Own Scripts
 
-You can use the in-palette **Create new script** wizard, or simply drop a `.ps1` file into `Documents\PaletteShellScripts`. Scripts use PowerShell attributes for metadata. A typical script looks like:
+You can use the in-palette **Create new script** wizard, or simply drop a `.ps1` file into your scripts folder (`Documents\PaletteShellScripts` by default — see [Settings](#-settings)). Scripts use PowerShell attributes for metadata. A typical script looks like:
 
 ```powershell
 using module .\PaletteScriptAttributes.psm1
@@ -152,7 +168,7 @@ Set-ClipboardText $result
 
 ### 🤖 Let an AI agent write scripts for you
 
-PaletteShell ships an [`AGENTS.md`](AGENTS.md) authoring spec and copies it into your `Documents\PaletteShellScripts` folder (kept in sync on every load, right next to `PaletteScriptAttributes.psm1`). It's the full contract for a valid script — the required file shape, every recognized `[Script*]` attribute, output modes, parameter-to-form mapping, and a pre-finish checklist.
+PaletteShell ships an [`AGENTS.md`](AGENTS.md) authoring spec and copies it into your scripts folder (kept in sync on every load, right next to `PaletteScriptAttributes.psm1`). It's the full contract for a valid script — the required file shape, every recognized `[Script*]` attribute, output modes, parameter-to-form mapping, and a pre-finish checklist.
 
 Because it lives alongside your scripts, any AI coding agent you point at that folder — Claude Code, Copilot, Cursor, and others that read `AGENTS.md` — discovers the rules automatically and can scaffold new `.ps1` scripts on the fly that PaletteShell loads and runs correctly. Just ask:
 
@@ -164,11 +180,11 @@ The agent reads `AGENTS.md`, produces a compliant script in the folder, and you 
 
 | Attribute | Purpose |
 |-----------|---------|
-| `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` (default) or `'powershell'` |
+| `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` or `'powershell'`. Omit it to use the [default script host setting](#-settings) |
 | `[ScriptCwd('{ScriptDir}')]` | Working directory (supports path tokens, below) |
 | `[RequiresElevation()]` | Run the script with administrator rights |
 | `[ConfirmBeforeRun('message')]` | Prompt a yes/no confirmation (with `message`) before running |
-| `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture |
+| `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture. Omit it to use the [default timeout setting](#-settings) |
 | `[ScriptGroup('Category')]` | Group/category name (shown as a tag) |
 | `[ScriptIcon('🚀')]` | Icon emoji or glyph shown in the palette |
 | `[ScriptOutput('None')]` | Output mode (see below) |
@@ -316,7 +332,8 @@ For more, browse the community library at **[paletteshell/PaletteShellScripts](h
 
 ## 🛠️ Building from Source
 
-PaletteShell is a .NET 9 Windows app packaged as an MSIX Command Palette extension.
+PaletteShell is a .NET 9 Windows app packaged as an MSIX Command Palette extension. For running
+tests, sideloading, and debugging the extension itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Requirements**
 
@@ -344,7 +361,9 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `Classes/ScriptStatus.cs` | Shows the "Running…" spinner in the status bar while a script runs |
 | `Classes/PinnedScripts.cs` | Tracks pinned scripts (persisted to `pinned.txt`) so they sort to the top |
 | `Classes/RecycleBin.cs` | Sends a deleted script to the Windows Recycle Bin via `SHFileOperation` |
-| `Classes/EditorLauncher.cs` | Opens a script in `$VISUAL`/`$EDITOR` (Notepad fallback) |
+| `Classes/EditorLauncher.cs` | Opens a script in the preferred editor setting, `$VISUAL`/`$EDITOR`, or Notepad |
+| `Classes/PaletteShellSettingsManager.cs` | Backs the Settings page (scripts folder, default host, default timeout, preferred editor) and persists it to `settings.json` |
+| `Pages/ScriptsFolderSetupPage.cs`, `Forms/ScriptsFolderSetupForm.cs` | First-run (and re-run) prompt that collects the scripts folder |
 | `Commands/RunScriptCommand.cs` | Runs a parameterless script and handles output/clipboard/toast/confirmation |
 | `Commands/CallbackCommand.cs` | Wraps a callback as a command — the confirmed action behind a confirmation dialog |
 | `Commands/TogglePinCommand.cs` | Pins/unpins a script and refreshes the list |
@@ -362,11 +381,11 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 
 ## 🤝 Community Scripts
 
-The **[PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** repository is a growing, community-maintained collection of scripts ready to drop into your `Documents\PaletteShellScripts` folder. Grab the ones you find useful, or contribute your own. You can open it any time from the palette's **"Find more scripts"** command.
+The **[PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** repository is a growing, community-maintained collection of scripts ready to drop into your scripts folder. Grab the ones you find useful, or contribute your own. You can open it any time from the palette's **"Find more scripts"** command.
 
 ## Need Help?
 
-Check out the bundled sample scripts (in `Documents\PaletteShellScripts` after first run) and the [community repo](https://github.com/paletteshell/PaletteShellScripts) for examples of common patterns and best practices.
+Check out the bundled sample scripts (in your scripts folder after first run) and the [community repo](https://github.com/paletteshell/PaletteShellScripts) for examples of common patterns and best practices.
 
 ## License
 

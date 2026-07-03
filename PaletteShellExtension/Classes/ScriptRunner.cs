@@ -118,29 +118,17 @@ internal static class ScriptRunner
         // Pre-load the module so attributes can be resolved at parse time
         var scriptDir = Path.GetDirectoryName(scriptPath) ?? "";
         var modulePath = Path.Combine(scriptDir, "PaletteScriptAttributes.psm1");
-        if (File.Exists(modulePath))
-        {
-            psi.ArgumentList.Add("-Command");
-            // Import module, force UTF-8 console output so captured stdout isn't mangled
-            // (the `using` statement must come first), then dot-source the script with
-            // args. Always redirect the information stream (6) to stdout to capture Write-Host.
-            var commandString = $"using module '{modulePath}'; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . '{scriptPath}' {args} 6>&1";
-            psi.ArgumentList.Add(commandString);
-        }
-        else
-        {
-            psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(scriptPath);
+        var usingModule = File.Exists(modulePath) ? $"using module '{modulePath}'; " : "";
 
-            // Add arguments
-            if (!string.IsNullOrWhiteSpace(args))
-            {
-                foreach (var arg in args.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    psi.ArgumentList.Add(arg);
-                }
-            }
-        }
+        psi.ArgumentList.Add("-Command");
+        // Import the module when present (the `using` statement must come first), force
+        // UTF-8 console output so captured stdout isn't mangled, then dot-source the script
+        // with args. Always redirect the information stream (6) to stdout to capture
+        // Write-Host. `args` is already single-quoted per value by the caller, so it's
+        // interpolated into this single command string rather than re-split into
+        // ArgumentList entries (which would break values containing spaces).
+        var commandString = $"{usingModule}[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . '{scriptPath}' {args} 6>&1";
+        psi.ArgumentList.Add(commandString);
 
         if (!string.IsNullOrWhiteSpace(cwd))
         {
@@ -195,8 +183,9 @@ internal static class ScriptRunner
             using var proc = Process.Start(psi);
             return proc is not null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Error($"Failed to launch script '{scriptPath}'", ex);
             return false;
         }
     }
@@ -257,6 +246,7 @@ internal static class ScriptRunner
             if (timeoutMs.HasValue && !proc.WaitForExit(timeoutMs.Value))
             {
                 result.TimedOut = true;
+                Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed");
                 try { proc.Kill(entireProcessTree: true); }
                 catch (Exception)
                 {
@@ -279,10 +269,15 @@ internal static class ScriptRunner
             result.StandardOutput = AwaitRead(stdoutTask);
             result.StandardError = AwaitRead(stderrTask);
             result.ExitCode = proc.ExitCode;
+            if (result.ExitCode != 0)
+            {
+                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}");
+            }
             return result;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Error($"Failed to run script '{scriptPath}'", ex);
             return null;
         }
         finally

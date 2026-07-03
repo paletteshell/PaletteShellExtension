@@ -62,7 +62,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? manifest.Host ?? "pwsh";
+        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
         _cwd = cwd;
         _env = env ?? new(StringComparer.OrdinalIgnoreCase);
         _queryParam = manifest.Parameters.FirstOrDefault()?.Name;
@@ -148,7 +148,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
         {
             var args = BuildArgs(query);
 
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : 30000;
+            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
 
             // Elevated scripts can't have their output captured, so List mode always
             // runs unelevated — there'd be nothing to list otherwise.

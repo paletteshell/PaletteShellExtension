@@ -167,4 +167,3 @@ BenchmarkDotNet.Artifacts/
 # =========================
 !Directory.Build.rsp
 /PaletteShellExtension/bundle_mapping.txt
-/PaletteShellExtension/PackageApplication.ps1

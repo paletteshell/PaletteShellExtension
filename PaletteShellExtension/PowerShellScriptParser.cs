@@ -94,8 +94,9 @@ internal static partial class PowerShellScriptParser
 
             return manifest;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Warn($"Failed to parse manifest for '{ps1Path}': {ex.Message}");
             return null;
         }
     }
@@ -114,6 +115,55 @@ internal static partial class PowerShellScriptParser
         return path.Replace("{ScriptDir}", scriptDir)
                    .Replace("{Home}", home)
                    .Replace("{Temp}", temp);
+    }
+
+    /// <summary>
+    /// Expands path tokens in a <c>[ScriptCwd(...)]</c> value and verifies the result exists.
+    /// Unlike <see cref="ExpandPathTokens"/> (also used for <c>[ScriptEnv(...)]</c> values,
+    /// which aren't necessarily directory paths), this is cwd-specific: a nonexistent working
+    /// directory would otherwise reach <c>Process.Start</c> and fail the whole run, so this
+    /// falls back to null (the process's default working directory) instead.
+    /// </summary>
+    public static string? ResolveCwd(string? cwd, string scriptPath)
+    {
+        var expanded = ExpandPathTokens(cwd, scriptPath);
+        if (string.IsNullOrWhiteSpace(expanded))
+        {
+            return expanded;
+        }
+
+        if (!Directory.Exists(expanded))
+        {
+            Log.Warn($"ScriptCwd '{expanded}' does not exist for '{scriptPath}'; using the default working directory instead");
+            return null;
+        }
+
+        return expanded;
+    }
+
+    private const int MinTimeoutMs = 1000;
+    private const int MaxTimeoutMs = 600_000; // 10 minutes
+
+    /// <summary>
+    /// Rejects a timeout too small to be meaningful (and negative values, which would throw
+    /// from <c>Process.WaitForExit</c>) and clamps one that's unreasonably large, so a typo'd
+    /// <c>[ScriptTimeout(...)]</c> can't hang a run indefinitely or fail it instantly.
+    /// </summary>
+    private static int? ValidateTimeout(int timeoutMs)
+    {
+        if (timeoutMs < MinTimeoutMs)
+        {
+            Log.Warn($"Ignoring ScriptTimeout({timeoutMs}) — must be at least {MinTimeoutMs}ms");
+            return null;
+        }
+
+        if (timeoutMs > MaxTimeoutMs)
+        {
+            Log.Warn($"Clamping ScriptTimeout({timeoutMs}) to the {MaxTimeoutMs}ms maximum");
+            return MaxTimeoutMs;
+        }
+
+        return timeoutMs;
     }
 
     // ----- Comment-based help -----------------------------------------------------------
@@ -226,7 +276,7 @@ internal static partial class PowerShellScriptParser
                         : "Are you sure you want to run this script?";
                     break;
                 case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
-                    manifest.TimeoutMs = timeout;
+                    manifest.TimeoutMs = ValidateTimeout(timeout);
                     break;
                 case "ScriptOutput" when values.Count >= 1:
                     // The mode may carry an extension hint for File mode after a colon,
@@ -247,7 +297,18 @@ internal static partial class PowerShellScriptParser
                     manifest.Group = values[0];
                     break;
                 case "ScriptIcon" when values.Count >= 1:
-                    manifest.IconGlyph = values[0];
+                    if (string.IsNullOrEmpty(values[0]))
+                    {
+                        // Explicit empty glyph is a no-op, same as omitting the attribute.
+                    }
+                    else if (IsValidIconGlyph(values[0]))
+                    {
+                        manifest.IconGlyph = values[0];
+                    }
+                    else
+                    {
+                        Log.Warn($"Ignoring invalid ScriptIcon value {EscapeForLog(values[0])} (expected a single glyph)");
+                    }
                     break;
                 case "ScriptEnv" when values.Count >= 2:
                     manifest.Env[values[0]] = values[1];
@@ -652,6 +713,40 @@ internal static partial class PowerShellScriptParser
         var name = group[..open].Trim();
         var args = ExtractBalanced(group, open, '(', ')');
         return (name, args);
+    }
+
+    /// <summary>
+    /// True when <paramref name="glyph"/> looks like a single icon glyph rather than a word
+    /// or sentence someone mistakenly passed to <c>[ScriptIcon(...)]</c>. Accepts both a lone
+    /// Segoe Fluent/MDL2 PUA codepoint and a multi-codepoint emoji sequence (skin tone
+    /// modifiers, ZWJ joins, flags), since those combine into a single rendered glyph even
+    /// though they span several <c>char</c>s.
+    /// </summary>
+    private static bool IsValidIconGlyph(string glyph)
+    {
+        if (string.IsNullOrEmpty(glyph) || glyph.Length > 32)
+        {
+            return false;
+        }
+
+        foreach (var c in glyph)
+        {
+            if (char.IsControl(c) || char.IsWhiteSpace(c))
+            {
+                return false;
+            }
+        }
+
+        return new StringInfo(glyph).LengthInTextElements == 1;
+    }
+
+    /// <summary>Renders a string safely for a log line: escapes control characters and caps length.</summary>
+    private static string EscapeForLog(string value)
+    {
+        const int max = 40;
+        var truncated = value.Length > max ? value[..max] + "…" : value;
+        return "'" + truncated.Replace("\\", "\\\\").Replace("'", "\\'")
+            .Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t") + "'";
     }
 
     /// <summary>Trims one matching pair of surrounding quotes and unescapes doubled quotes.</summary>

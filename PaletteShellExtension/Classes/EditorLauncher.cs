@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 
 namespace PaletteShellExtension.Classes;
 
@@ -11,9 +12,14 @@ namespace PaletteShellExtension.Classes;
 /// </summary>
 internal static class EditorLauncher
 {
+    // Written with a BOM so arbitrary external editors (notably the notepad.exe fallback)
+    // reliably detect UTF-8 instead of guessing at all-non-Latin content.
+    private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true);
+
     public static void Open(string path)
     {
-        var editor = Environment.GetEnvironmentVariable("VISUAL")
+        var editor = PaletteShellSettingsManager.Instance.PreferredEditor
+                 ?? Environment.GetEnvironmentVariable("VISUAL")
                  ?? Environment.GetEnvironmentVariable("EDITOR")
                  ?? "notepad.exe";
         Process.Start(new ProcessStartInfo(editor, $"\"{path}\"") { UseShellExecute = true });
@@ -34,7 +40,7 @@ internal static class EditorLauncher
         var fileName = $"{name}-{DateTime.Now:yyyyMMdd-HHmmss}{NormalizeExtension(extension)}";
         var path = Path.Combine(dir, fileName);
 
-        File.WriteAllText(path, content ?? "");
+        File.WriteAllText(path, content ?? "", Utf8WithBom);
         Open(path);
         return path;
     }
