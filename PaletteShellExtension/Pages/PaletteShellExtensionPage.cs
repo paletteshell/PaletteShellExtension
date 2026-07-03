@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace PaletteShellExtension;
 
@@ -37,9 +38,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         Directory.CreateDirectory(_rootDirectory);
         _pins = new PinnedScripts(_rootDirectory);
         CopySampleScripts();
-        CopyPowerShellModule();
         RefreshFiles();
 
+        // The module/docs/dll files copied here are never *.ps1 files, so RefreshFiles()
+        // never picks them up and they can't affect what GetItems() shows — safe to push
+        // off the constructor's critical path instead of blocking the first render on them.
+        _ = Task.Run(CopyPowerShellModule);
     }
 
     /// <summary>Rescans the scripts folder and refreshes the list. Returns the number of
@@ -102,7 +106,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         {
             try
             {
-                File.Copy(moduleSourcePath, moduleTargetPath, overwrite: true);
+                CopyIfChanged(moduleSourcePath, moduleTargetPath);
             }
             catch (Exception ex)
             {
@@ -119,7 +123,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         {
             try
             {
-                File.Copy(agentsSourcePath, agentsTargetPath, overwrite: true);
+                CopyIfChanged(agentsSourcePath, agentsTargetPath);
             }
             catch (Exception)
             {
@@ -135,13 +139,30 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         {
             try
             {
-                File.Copy(textCopySource, textCopyTarget, overwrite: true);
+                CopyIfChanged(textCopySource, textCopyTarget);
             }
             catch (Exception)
             {
                 // Scripts will fall back to Windows Forms clipboard.
             }
         }
+    }
+
+    // Skips the copy when the target already matches the source (same size and write time),
+    // so a launch that changes nothing doesn't pay for redundant disk writes.
+    private static void CopyIfChanged(string source, string target)
+    {
+        if (File.Exists(target))
+        {
+            var sourceInfo = new FileInfo(source);
+            var targetInfo = new FileInfo(target);
+            if (sourceInfo.Length == targetInfo.Length && sourceInfo.LastWriteTimeUtc == targetInfo.LastWriteTimeUtc)
+            {
+                return;
+            }
+        }
+
+        File.Copy(source, target, overwrite: true);
     }
 
     public override IListItem[] GetItems()
@@ -161,10 +182,16 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         // Script items are sorted below: pinned scripts first, then alphabetically by their
         // displayed Title (not by filename, since the manifest Title often differs from it).
         // The Pinned flag is captured per item so the sort doesn't have to re-read the store.
-        List<(bool Pinned, string Title, IListItem Item)> scriptItems = [];
+        //
+        // Parsing each script is independent (PowerShellScriptParser is stateless, and _pins
+        // is only read here, never mutated concurrently), so this runs in parallel and writes
+        // into a slot per index rather than a shared List<T>.Add. Sorting below is unaffected
+        // by completion order, so results are identical to the sequential version.
+        var scriptResults = new (bool Pinned, string Title, IListItem Item)?[_files.Count];
 
-        foreach (var path in _files)
+        Parallel.For(0, _files.Count, i =>
         {
+            var path = _files[i];
             try
             {
                 var manifest = PowerShellScriptParser.TryParseManifest(path);
@@ -254,7 +281,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     MoreCommands = BuildContextCommands(path)
                 };
 
-                scriptItems.Add((pinned, title, listItem));
+                scriptResults[i] = (pinned, title, listItem);
             }
             catch (Exception ex)
             {
@@ -264,20 +291,21 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 Log.Warn($"Failed to build list item for '{path}': {ex.Message}");
                 var pinned = _pins.IsPinned(path);
                 var errorTitle = Path.GetFileNameWithoutExtension(path);
-                scriptItems.Add((pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
+                scriptResults[i] = (pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
                 {
                     Title = errorTitle,
                     Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
                     Icon = new IconInfo(""), // Warning
                     Tags = BuildTags(pinned, null),
                     MoreCommands = BuildContextCommands(path)
-                }));
+                });
             }
-        }
+        });
 
         // Keep the system commands at the very top; then pinned scripts, then the rest —
         // each group alphabetical by title.
-        items.AddRange(scriptItems
+        items.AddRange(scriptResults
+            .Select(r => r!.Value)
             .OrderByDescending(i => i.Pinned)
             .ThenBy(i => i.Title, StringComparer.CurrentCultureIgnoreCase)
             .Select(i => i.Item));
