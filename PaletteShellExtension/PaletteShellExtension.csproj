@@ -31,6 +31,10 @@
     <Content Include="Assets\**\*.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PaletteShellExtension.Tests" />
+  </ItemGroup>
+
    <Target Name="EnsureTextCopyInOutput" AfterTargets="Build">
     <ItemGroup>
       <TextCopySource Include="$(NuGetPackageRoot)textcopy\**\lib\netstandard2.0\TextCopy.dll" />
