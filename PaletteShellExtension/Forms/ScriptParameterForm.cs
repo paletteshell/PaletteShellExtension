@@ -57,6 +57,20 @@ internal sealed class ScriptParameterForm : FormContent
             var obj = JsonNode.Parse(inputs)?.AsObject();
             if (obj is null) return CommandResult.Dismiss();
 
+            // The Adaptive Card's `isRequired` flag is enforced client-side by the host, but
+            // that isn't guaranteed for every input type or host version — this is the
+            // server-side backstop so a mandatory parameter can never reach the script empty.
+            var missing = GetMissingRequiredFields(_manifest, obj);
+
+            if (missing.Count > 0)
+            {
+                return CommandResult.ShowToast(new ToastArgs
+                {
+                    Message = $"Required: {string.Join(", ", missing)}",
+                    Result = CommandResult.KeepOpen()
+                });
+            }
+
             // Build argument list from form values
             var args = new List<string>();
             foreach (var param in _manifest.Parameters)
@@ -217,6 +231,14 @@ internal sealed class ScriptParameterForm : FormContent
             return CommandResult.GoBack();
         }
     }
+
+    /// <summary>Returns the label/name of each required parameter whose submitted value is
+    /// empty or whitespace-only.</summary>
+    internal static List<string> GetMissingRequiredFields(ScriptManifest manifest, JsonObject values) =>
+        manifest.Parameters
+            .Where(p => p.Required == true && string.IsNullOrWhiteSpace(values[p.Name]?.ToString()))
+            .Select(p => p.Label ?? p.Name)
+            .ToList();
 
     private string BuildTemplateJson()
     {

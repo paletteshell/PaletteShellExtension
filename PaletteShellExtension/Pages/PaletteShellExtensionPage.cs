@@ -182,7 +182,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     // stdout into a searchable, pickable list. If the script declares a
                     // parameter, that page feeds it the palette's search text (it acts as a
                     // live provider) rather than using the parameter form.
-                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
 
                     command = new ScriptListPage(
                         scriptPath: path,
@@ -194,7 +194,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 else if (manifest?.Parameters is { Count: > 0 })
                 {
                     // Script has parameters - navigate to parameter form page
-                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
 
                     var formPage = new ScriptParameterFormPage(
                         scriptPath: path,
@@ -210,7 +210,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 {
                     // No parameters, Markdown output - navigate to a page that runs
                     // the script and renders its stdout as Markdown.
-                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
 
                     command = new ScriptMarkdownPage(
                         scriptPath: path,
@@ -224,7 +224,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     // No parameters, Result output - navigate to a page that runs the script
                     // and shows its output as a single copyable result (Enter copies), the way
                     // a calculator shows an answer.
-                    var resolvedCwd = PowerShellScriptParser.ExpandPathTokens(manifest.Cwd, path);
+                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
 
                     command = new ScriptResultPage(
                         scriptPath: path,

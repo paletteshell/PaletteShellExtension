@@ -117,6 +117,55 @@ internal static partial class PowerShellScriptParser
                    .Replace("{Temp}", temp);
     }
 
+    /// <summary>
+    /// Expands path tokens in a <c>[ScriptCwd(...)]</c> value and verifies the result exists.
+    /// Unlike <see cref="ExpandPathTokens"/> (also used for <c>[ScriptEnv(...)]</c> values,
+    /// which aren't necessarily directory paths), this is cwd-specific: a nonexistent working
+    /// directory would otherwise reach <c>Process.Start</c> and fail the whole run, so this
+    /// falls back to null (the process's default working directory) instead.
+    /// </summary>
+    public static string? ResolveCwd(string? cwd, string scriptPath)
+    {
+        var expanded = ExpandPathTokens(cwd, scriptPath);
+        if (string.IsNullOrWhiteSpace(expanded))
+        {
+            return expanded;
+        }
+
+        if (!Directory.Exists(expanded))
+        {
+            Log.Warn($"ScriptCwd '{expanded}' does not exist for '{scriptPath}'; using the default working directory instead");
+            return null;
+        }
+
+        return expanded;
+    }
+
+    private const int MinTimeoutMs = 1000;
+    private const int MaxTimeoutMs = 600_000; // 10 minutes
+
+    /// <summary>
+    /// Rejects a timeout too small to be meaningful (and negative values, which would throw
+    /// from <c>Process.WaitForExit</c>) and clamps one that's unreasonably large, so a typo'd
+    /// <c>[ScriptTimeout(...)]</c> can't hang a run indefinitely or fail it instantly.
+    /// </summary>
+    private static int? ValidateTimeout(int timeoutMs)
+    {
+        if (timeoutMs < MinTimeoutMs)
+        {
+            Log.Warn($"Ignoring ScriptTimeout({timeoutMs}) — must be at least {MinTimeoutMs}ms");
+            return null;
+        }
+
+        if (timeoutMs > MaxTimeoutMs)
+        {
+            Log.Warn($"Clamping ScriptTimeout({timeoutMs}) to the {MaxTimeoutMs}ms maximum");
+            return MaxTimeoutMs;
+        }
+
+        return timeoutMs;
+    }
+
     // ----- Comment-based help -----------------------------------------------------------
 
     private sealed class HelpInfo
@@ -227,7 +276,7 @@ internal static partial class PowerShellScriptParser
                         : "Are you sure you want to run this script?";
                     break;
                 case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
-                    manifest.TimeoutMs = timeout;
+                    manifest.TimeoutMs = ValidateTimeout(timeout);
                     break;
                 case "ScriptOutput" when values.Count >= 1:
                     // The mode may carry an extension hint for File mode after a colon,

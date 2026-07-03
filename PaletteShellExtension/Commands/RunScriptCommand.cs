@@ -43,7 +43,7 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         var wantsAdmin = _manifest.RequiresAdmin == true;
 
         // CWD
-        var cwd = ExpandPathTokens(_manifest.Cwd, path);
+        var cwd = PowerShellScriptParser.ResolveCwd(_manifest.Cwd, path);
 
         // Env
         var expandedEnv = new Dictionary<string, string>();

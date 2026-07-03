@@ -282,6 +282,29 @@ public class PowerShellScriptParserTests
         Assert.Equal(30000, manifest!.TimeoutMs);
     }
 
+    [Theory]
+    [InlineData(-5)]
+    [InlineData(0)]
+    [InlineData(999)]
+    public void ScriptTimeout_BelowMinimum_IsIgnored(int timeoutMs)
+    {
+        using var file = new TestScriptFile($"[ScriptTimeout({timeoutMs})]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Null(manifest!.TimeoutMs);
+    }
+
+    [Fact]
+    public void ScriptTimeout_AboveMaximum_IsClamped()
+    {
+        using var file = new TestScriptFile("[ScriptTimeout(999999999)]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal(600_000, manifest!.TimeoutMs);
+    }
+
     [Fact]
     public void ScriptOutput_WithoutExtension_SetsOutputOnly()
     {
@@ -462,5 +485,46 @@ public class PowerShellScriptParserTests
         var result = PowerShellScriptParser.ExpandPathTokens("{Temp}file.txt", @"C:\scripts\test.ps1");
 
         Assert.Equal(temp + "file.txt", result);
+    }
+
+    [Fact]
+    public void ResolveCwd_NonexistentDirectory_ReturnsNull()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"does-not-exist-{System.Guid.NewGuid():N}");
+
+        var result = PowerShellScriptParser.ResolveCwd(missing, @"C:\scripts\test.ps1");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ResolveCwd_ExistingDirectory_ReturnsExpandedPath()
+    {
+        var temp = Path.GetTempPath();
+
+        var result = PowerShellScriptParser.ResolveCwd("{Temp}", @"C:\scripts\test.ps1");
+
+        Assert.Equal(temp, result);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ResolveCwd_NullOrEmpty_PassesThrough(string? input)
+    {
+        var result = PowerShellScriptParser.ResolveCwd(input, @"C:\scripts\test.ps1");
+
+        Assert.Equal(input, result);
+    }
+
+    [Fact]
+    public void ResolveCwd_ScriptDirOfRealScript_Resolves()
+    {
+        using var file = new TestScriptFile("param()");
+        var expectedDir = Path.GetDirectoryName(file.Path);
+
+        var result = PowerShellScriptParser.ResolveCwd("{ScriptDir}", file.Path);
+
+        Assert.Equal(expectedDir, result);
     }
 }
