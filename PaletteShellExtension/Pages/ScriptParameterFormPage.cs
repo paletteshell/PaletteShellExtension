@@ -42,7 +42,7 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
         _content = [_form];
 
         Title = manifest.Title ?? "Run Script";
-        Name = "script-params";
+        Name = "Enter Parameters";
         Icon = new(manifest.IconGlyph ?? "");
         Id = $"ScriptParams_{System.IO.Path.GetFileNameWithoutExtension(scriptPath)}";
     }
