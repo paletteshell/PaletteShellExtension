@@ -168,7 +168,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
     private static int ParseTimeout(string? raw)
     {
         const int Default = 20000, Min = 1000, Max = 600_000;
-        if (!int.TryParse(raw, out var value) || value < Min)
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < Min)
             return Default;
         return Math.Min(value, Max);
     }
