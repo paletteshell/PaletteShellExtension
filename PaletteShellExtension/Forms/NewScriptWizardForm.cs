@@ -1,6 +1,7 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -26,6 +27,73 @@ internal sealed partial class NewScriptWizardForm : FormContent
       "label": "File name",
       "placeholder": "MyScript",
       "value": "MyScript"
+    },
+    {
+      "type": "Input.Text",
+      "id": "description",
+      "label": "Description (optional)",
+      "placeholder": "Describe what this script does"
+    },
+    {
+      "type": "Input.Text",
+      "id": "group",
+      "label": "Group",
+      "value": "General"
+    },
+    {
+      "type": "Input.Text",
+      "id": "icon",
+      "label": "Icon (emoji or glyph)",
+      "value": "🧩"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "output",
+      "label": "Output mode",
+      "style": "compact",
+      "value": "None",
+      "choices": [
+        { "title": "None — run silently", "value": "None" },
+        { "title": "Toast — show output in a notification", "value": "Toast" },
+        { "title": "Clipboard — copy output", "value": "Clipboard" },
+        { "title": "Markdown — render output as Markdown", "value": "Markdown" },
+        { "title": "Result — single copyable result", "value": "Result" },
+        { "title": "List — searchable list of items", "value": "List" },
+        { "title": "File — open output in editor", "value": "File" }
+      ]
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "host",
+      "label": "Host",
+      "style": "compact",
+      "value": "pwsh",
+      "choices": [
+        { "title": "PowerShell 7 (pwsh)", "value": "pwsh" },
+        { "title": "Windows PowerShell 5.1", "value": "powershell" }
+      ]
+    },
+    {
+      "type": "Input.Number",
+      "id": "timeout",
+      "label": "Timeout (ms)",
+      "value": 20000,
+      "min": 1000,
+      "max": 600000
+    },
+    {
+      "type": "Input.Toggle",
+      "id": "elevate",
+      "title": "Requires administrator rights",
+      "valueOn": "true",
+      "valueOff": "false",
+      "value": "false"
+    },
+    {
+      "type": "Input.Text",
+      "id": "confirm",
+      "label": "Confirmation message (optional — prompts before running)",
+      "placeholder": "Are you sure you want to run this script?"
     },
     {
       "type": "Input.Toggle",
@@ -61,10 +129,21 @@ internal sealed partial class NewScriptWizardForm : FormContent
         }
 
         var rawName = formInput["name"]?.ToString()?.Trim();
+        var name = string.IsNullOrWhiteSpace(rawName) ? "MyScript" : rawName;
+
+        var options = new ScriptOptions(
+            Description: formInput["description"]?.ToString()?.Trim(),
+            Group: formInput["group"]?.ToString()?.Trim(),
+            Icon: formInput["icon"]?.ToString()?.Trim(),
+            Output: formInput["output"]?.ToString()?.Trim(),
+            Host: formInput["host"]?.ToString()?.Trim(),
+            TimeoutMs: ParseTimeout(formInput["timeout"]?.ToString()),
+            RequiresElevation: (formInput["elevate"]?.ToString() ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase),
+            ConfirmMessage: formInput["confirm"]?.ToString()?.Trim());
+
         var open = (formInput["open"]?.ToString() ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
 
-        var name = string.IsNullOrWhiteSpace(rawName) ? "MyScript" : rawName;
-        var path = CreateScript(_root, name);
+        var path = CreateScript(_root, name, options);
 
         if (open && path is not null)
             EditorLauncher.Open(path);
@@ -86,7 +165,26 @@ internal sealed partial class NewScriptWizardForm : FormContent
         }
     }
 
-    private static string? CreateScript(string root, string rawName)
+    private static int ParseTimeout(string? raw)
+    {
+        const int Default = 20000, Min = 1000, Max = 600_000;
+        if (!int.TryParse(raw, out var value) || value < Min)
+            return Default;
+        return Math.Min(value, Max);
+    }
+
+    /// <summary>Collected wizard answers that shape the generated attribute block and body.</summary>
+    private readonly record struct ScriptOptions(
+        string? Description,
+        string? Group,
+        string? Icon,
+        string? Output,
+        string? Host,
+        int TimeoutMs,
+        bool RequiresElevation,
+        string? ConfirmMessage);
+
+    private static string? CreateScript(string root, string rawName, ScriptOptions options)
     {
         Directory.CreateDirectory(root);
 
@@ -96,7 +194,8 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
         var full = UniquePath(Path.Combine(root, safe));
         var utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        File.WriteAllText(full, DefaultHeader(Path.GetFileNameWithoutExtension(full)) + BlankBody(), utf8NoBom);
+        var content = BuildHeader(Path.GetFileNameWithoutExtension(full), options) + BuildParamBlock() + BuildBody(options.Output);
+        File.WriteAllText(full, content, utf8NoBom);
         return full;
     }
     private static string Sanitize(string name)
@@ -120,35 +219,88 @@ internal sealed partial class NewScriptWizardForm : FormContent
             if (!File.Exists(candidate)) return candidate;
         }
     }
+
     // ---------- templates (match the sample-script format the parser reads:
     //            comment-based help + [Script*] attributes) ----------
 
-    private static string DefaultHeader(string name) =>
-$@"using module .\PaletteScriptAttributes.psm1
+    private static string EscapeSingleQuoted(string value) => value.Replace("'", "''");
 
-<#
-.SYNOPSIS
-    {name}
-.DESCRIPTION
-    Describe what this script does.
-#>
-[ScriptHost('pwsh')]
-[ScriptGroup('General')]
-[ScriptIcon('🧩')]
-[ScriptTimeout(20000)]
-[ScriptOutput('None')]
-[CmdletBinding()]
-";
+    private static string BuildHeader(string name, ScriptOptions options)
+    {
+        var sb = new StringBuilder();
+        sb.Append("using module .\\PaletteScriptAttributes.psm1\n\n");
+        sb.Append("<#\n.SYNOPSIS\n    ").Append(name).Append('\n');
 
-    private static string BlankBody() =>
+        var description = string.IsNullOrWhiteSpace(options.Description)
+            ? "Describe what this script does."
+            : options.Description;
+        sb.Append(".DESCRIPTION\n    ").Append(description).Append('\n');
+        sb.Append("#>\n");
+
+        var host = string.IsNullOrWhiteSpace(options.Host) ? "pwsh" : options.Host;
+        sb.Append(CultureInfo.InvariantCulture, $"[ScriptHost('{host}')]\n");
+
+        var group = string.IsNullOrWhiteSpace(options.Group) ? "General" : options.Group;
+        sb.Append(CultureInfo.InvariantCulture, $"[ScriptGroup('{EscapeSingleQuoted(group)}')]\n");
+
+        if (!string.IsNullOrWhiteSpace(options.Icon))
+            sb.Append(CultureInfo.InvariantCulture, $"[ScriptIcon('{EscapeSingleQuoted(options.Icon)}')]\n");
+
+        if (options.RequiresElevation)
+            sb.Append("[RequiresElevation()]\n");
+
+        if (!string.IsNullOrWhiteSpace(options.ConfirmMessage))
+            sb.Append(CultureInfo.InvariantCulture, $"[ConfirmBeforeRun('{EscapeSingleQuoted(options.ConfirmMessage)}')]\n");
+
+        sb.Append(CultureInfo.InvariantCulture, $"[ScriptTimeout({options.TimeoutMs})]\n");
+
+        var output = string.IsNullOrWhiteSpace(options.Output) ? "None" : options.Output;
+        sb.Append(CultureInfo.InvariantCulture, $"[ScriptOutput('{output}')]\n");
+
+        sb.Append("[CmdletBinding()]\n");
+        return sb.ToString();
+    }
+
+    private static string BuildParamBlock() =>
 @"param(
     # Add parameters here
     # [Parameter(Mandatory=$true)]
     # [string]$Path
 )
 
-# --- Script body ---
-# Write-Host ""Hello from PaletteShell!""
 ";
 
+    /// <summary>A short, working body matching the chosen output mode, so the scaffold
+    /// demonstrates the right shape (e.g. Result mode expects a single emitted value)
+    /// instead of leaving every mode with the same generic placeholder.</summary>
+    private static string BuildBody(string? output) => (string.IsNullOrWhiteSpace(output) ? "None" : output) switch
+    {
+        "Result" =>
+            "# Emit just the value; Result mode shows it as a single copyable result.\n" +
+            "[System.Guid]::NewGuid().ToString()\n",
+
+        "List" =>
+            "# Print newline-delimited items, or a JSON array of objects (title/subtitle/value/url/icon) for richer items.\n" +
+            "Get-ChildItem -Name\n",
+
+        "Markdown" =>
+            "# Captured stdout is rendered as Markdown on its own page.\n" +
+            "\"## Report`n`nSomething happened.\"\n",
+
+        "Clipboard" =>
+            "# Whatever stdout writes is copied to the clipboard.\n" +
+            "\"Copied text\"\n",
+
+        "File" =>
+            "# Captured stdout is written to a temp file and opened in your editor.\n" +
+            "Get-Process | Select-Object Name, Id, CPU | ConvertTo-Csv -NoTypeInformation\n",
+
+        "Toast" =>
+            "# Captured stdout is shown in a notification.\n" +
+            "\"Done!\"\n",
+
+        _ =>
+            "# --- Script body ---\n" +
+            "# Write-Host \"Hello from PaletteShell!\"\n"
+    };
 }
