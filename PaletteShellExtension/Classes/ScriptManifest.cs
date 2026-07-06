@@ -12,7 +12,6 @@ public sealed class ScriptManifest
     public string? Group { get; set; }
     public List<string> Tags { get; set; } = [];
     public string? IconGlyph { get; set; }
-    public string? Version { get; set; }
 
     // Minimum PaletteShell app version (SemVer) required to run this script. A script that
     // omits [RequiresPaletteShellMinimum(...)] defaults to "0.0.6" (see PowerShellScriptParser)

@@ -27,7 +27,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
     private string? _rootDirectory;
     private PinnedScripts? _pins;
-    private List<string> _files = [];
+    private List<FileInfo> _files = [];
     private IListItem[]? _cachedItems;
     private readonly ConcurrentDictionary<string, CachedManifestEntry> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -36,7 +36,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     public PaletteShellExtensionPage()
     {
         Icon = IconHelpers.FromRelativePath("Assets\\StoreLogo.png");
-        Title = "PaletteShell";
+        Title = $"PaletteShell v{AppVersion.Current}";
         Name = "PaletteShell";
 
         var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
@@ -111,9 +111,11 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         var rootDirectory = _rootDirectory;
 
-        var files = Directory.GetFiles(rootDirectory, "*.ps1", SearchOption.TopDirectoryOnly);
-        _files = [.. files];
-        PruneManifestCache(_files);
+        // Enumerate as FileInfo rather than paths: the directory listing already carries each
+        // file's size and write time, so the manifest-cache check in GetItems can reuse them
+        // instead of paying a second stat per script (noticeable on synced/network folders).
+        _files = [.. new DirectoryInfo(rootDirectory).EnumerateFiles("*.ps1", SearchOption.TopDirectoryOnly)];
+        PruneManifestCache(_files.Select(f => f.FullName));
 
         // Use the page's change notification so CmdPal asks for items again.
         RaiseItemsChanged();
@@ -123,13 +125,24 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
     private static void CopySampleScripts(string root)
     {
+        var installedSamples = new InstalledSampleScripts(root);
+
+        // Shipped sample content can only change when the app version does, so a folder
+        // already synced by this version has nothing to do — skip the whole pass instead of
+        // re-reading and re-hashing every sample each activation (which, with the default
+        // folder under a OneDrive-backed Documents, can even hydrate placeholder files).
+        var currentVersion = AppVersion.Current.ToString();
+        if (string.Equals(installedSamples.SyncedAppVersion, currentVersion, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         var assembly = Assembly.GetExecutingAssembly();
         var resourceNames = assembly.GetManifestResourceNames()
             .Where(n => n.Contains("SampleScripts") && n.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        var installedSamples = new InstalledSampleScripts(root);
-        var recordedAnySamples = false;
+        var anyFailures = false;
 
         foreach (var resourceName in resourceNames)
         {
@@ -150,26 +163,34 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var targetExists = File.Exists(targetPath);
                 var onDiskHash = targetExists ? SampleScriptSync.ComputeHash(File.ReadAllText(targetPath, Encoding.UTF8)) : null;
                 installedSamples.TryGet(fileName, out var record);
-                var shippedVersion = PowerShellScriptParser.ParseManifestFromContent(content).Version;
+                var shippedHash = SampleScriptSync.ComputeHash(content);
 
-                // Only (re)write when it's a fresh install, or a newer shipped version whose
-                // on-disk copy still matches what we last installed (i.e. not user-modified).
-                if (SampleScriptSync.ShouldOverwrite(targetExists, record, onDiskHash, shippedVersion))
+                // Only (re)write when it's a fresh install, or the bundled content changed since
+                // we last installed it and the on-disk copy still matches what we installed
+                // (i.e. not user-modified).
+                if (SampleScriptSync.ShouldOverwrite(targetExists, record, onDiskHash, shippedHash))
                 {
                     File.WriteAllText(targetPath, content, new UTF8Encoding(false));
-                    installedSamples.Record(fileName, shippedVersion, SampleScriptSync.ComputeHash(content), persist: false);
-                    recordedAnySamples = true;
+                    installedSamples.Record(fileName, shippedHash, persist: false);
                 }
             }
             catch (Exception ex)
             {
+                anyFailures = true;
                 Log.Warn($"Failed to copy sample script '{fileName}': {ex.Message}");
             }
         }
 
-        if (recordedAnySamples)
+        // Only stamp a clean pass: a transient failure (e.g. a locked file) leaves the stamp
+        // stale so the next activation retries, matching the old every-launch behavior. Any
+        // samples that did copy are still persisted so their edits-vs-updates tracking holds.
+        if (anyFailures)
         {
             installedSamples.Save();
+        }
+        else
+        {
+            installedSamples.MarkSynced(currentVersion);
         }
     }
 
@@ -291,10 +312,11 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         Parallel.For(0, _files.Count, i =>
         {
-            var path = _files[i];
+            var file = _files[i];
+            var path = file.FullName;
             try
             {
-                var manifest = GetCachedManifest(path);
+                var manifest = GetCachedManifest(file);
                 var title = manifest?.Title ?? Path.GetFileNameWithoutExtension(path);
                 var subtitle = manifest?.Description ?? path;
 
@@ -430,11 +452,14 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     // scannable instead of showing rows with no icon at all.
     private static readonly IconInfo DefaultScriptIcon = new(""); // CommandPrompt
 
-    private ScriptManifest? GetCachedManifest(string path)
+    // Takes the FileInfo from RefreshFiles' enumeration so the size/write-time cache check
+    // doesn't re-stat the file. The snapshot being from scan time is fine: picking up
+    // between-reload edits was never promised — "Reload scripts" is the refresh point.
+    private ScriptManifest? GetCachedManifest(FileInfo info)
     {
+        var path = info.FullName;
         try
         {
-            var info = new FileInfo(path);
             if (_manifestCache.TryGetValue(path, out var cached)
                 && cached.Length == info.Length
                 && cached.LastWriteTimeUtc == info.LastWriteTimeUtc)

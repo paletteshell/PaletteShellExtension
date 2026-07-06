@@ -358,26 +358,6 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
-    public void ScriptVersion_IsParsed()
-    {
-        using var file = new TestScriptFile("[ScriptVersion('1.2.0')]\nparam()");
-
-        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
-
-        Assert.Equal("1.2.0", manifest!.Version);
-    }
-
-    [Fact]
-    public void ScriptVersion_WhenOmitted_DefaultsTo1_0_0()
-    {
-        using var file = new TestScriptFile("param()");
-
-        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
-
-        Assert.Equal("1.0.0", manifest!.Version);
-    }
-
-    [Fact]
     public void RequiresPaletteShellMinimum_IsParsed()
     {
         using var file = new TestScriptFile("[RequiresPaletteShellMinimum('1.2.0')]\nparam()");
@@ -606,5 +586,35 @@ public class PowerShellScriptParserTests
         var result = PowerShellScriptParser.ResolveCwd("{ScriptDir}", file.Path);
 
         Assert.Equal(expectedDir, result);
+    }
+
+    // ----- Metadata read cap --------------------------------------------------------------
+
+    [Fact]
+    public void LargeScript_MetadataAtTop_StillParses()
+    {
+        // The parser caps its read at the head of the file; a script with a huge body must
+        // still have its header metadata (help, attributes, params) parsed correctly.
+        var header = """
+            <#
+            .SYNOPSIS
+            Big Script
+            #>
+            [ScriptOutput('Clipboard')]
+            param(
+                [string]$Name = 'x'
+            )
+
+            """;
+        var body = string.Concat(Enumerable.Repeat("Write-Output 'padding line to inflate the body well past the metadata read cap'\n", 5000));
+        using var file = new TestScriptFile(header + body);
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.NotNull(manifest);
+        Assert.Equal("Big Script", manifest!.Title);
+        Assert.Equal("Clipboard", manifest.Output);
+        Assert.Single(manifest.Parameters);
+        Assert.Equal("Name", manifest.Parameters[0].Name);
     }
 }

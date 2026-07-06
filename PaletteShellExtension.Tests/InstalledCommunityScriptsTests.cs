@@ -58,26 +58,6 @@ public class InstalledCommunityScriptsTests
     }
 
     [Fact]
-    public void Record_WithVersion_RoundTripsAcrossInstances()
-    {
-        var root = CreateTempRoot();
-        try
-        {
-            var localPath = Path.Combine(root, "Foo.ps1");
-            new InstalledCommunityScripts(root).Record(localPath, "Clipboard/Foo.ps1", "sha1", "1.2.0");
-
-            var reloaded = new InstalledCommunityScripts(root);
-
-            Assert.True(reloaded.TryGetInstalled(localPath, out var record));
-            Assert.Equal("1.2.0", record!.Version);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
     public void Remove_ClearsTheRecord()
     {
         var root = CreateTempRoot();

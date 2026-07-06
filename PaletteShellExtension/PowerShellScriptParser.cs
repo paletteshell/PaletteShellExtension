@@ -23,6 +23,12 @@ namespace PaletteShellExtension;
 /// </remarks>
 internal static partial class PowerShellScriptParser
 {
+    // Everything this parser needs — the help comment, [Script*] attributes, and the
+    // param(...) block — lives at the top of a script, so reading (and re-allocating during
+    // comment stripping) megabytes of body code is pure waste. Cap the read; a script whose
+    // metadata extends past this is pathological and simply parses as metadata-less.
+    private const int MetadataReadLimitChars = 64 * 1024;
+
     public static ScriptManifest? TryParseManifest(string ps1Path)
     {
         if (!File.Exists(ps1Path))
@@ -32,7 +38,14 @@ internal static partial class PowerShellScriptParser
 
         try
         {
-            var content = File.ReadAllText(ps1Path, Encoding.UTF8);
+            // A UTF-8 file never decodes to more chars than it has bytes, so sizing the
+            // buffer by file length keeps small scripts (the normal case) from paying for
+            // the full cap.
+            var maxChars = (int)Math.Min(new FileInfo(ps1Path).Length, MetadataReadLimitChars);
+            using var reader = new StreamReader(ps1Path, Encoding.UTF8);
+            var buffer = new char[maxChars];
+            var read = reader.ReadBlock(buffer, 0, buffer.Length);
+            var content = new string(buffer, 0, read);
             return ParseManifestFromContent(content, Path.GetFileNameWithoutExtension(ps1Path));
         }
         catch (Exception ex)
@@ -81,11 +94,6 @@ internal static partial class PowerShellScriptParser
 
         // Script-level [Script*] attributes live before the param keyword.
         ParseScriptAttributes(attributeZone, manifest);
-
-        // A script that predates [ScriptVersion(...)] (or simply omits it) is assumed to be
-        // at the baseline version rather than "no version" - keeps every manifest comparable
-        // instead of making callers special-case a null.
-        manifest.Version ??= "1.0.0";
 
         // A script that predates [RequiresPaletteShellMinimum(...)] (or simply omits it) is
         // assumed to require no more than 0.0.6 - the last PaletteShell version before
@@ -322,9 +330,6 @@ internal static partial class PowerShellScriptParser
                         .Where(t => t.Length > 0)
                         .ToList();
                     break;
-                case "ScriptVersion" when values.Count >= 1:
-                    manifest.Version = values[0];
-                    break;
                 case "RequiresPaletteShellMinimum" when values.Count >= 1:
                     manifest.MinVersion = values[0];
                     break;
@@ -529,7 +534,7 @@ internal static partial class PowerShellScriptParser
         "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
         "PSDefaultValue", "ArgumentCompleter",
         "ScriptHost", "ScriptCwd", "RequiresElevation", "ConfirmBeforeRun", "ScriptTimeout",
-        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv", "ScriptVersion",
+        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv",
         "RequiresPaletteShellMinimum", "RequiresPaletteShellMaximum"
     };
 

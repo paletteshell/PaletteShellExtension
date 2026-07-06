@@ -13,21 +13,25 @@ namespace PaletteShellExtension.Classes;
 internal static class Log
 {
     private static readonly object WriteLock = new();
-    private static readonly string LogPath;
+    private static readonly string LogDirectory;
+
+    // A single append-mode writer held for the process lifetime (re-opened when the day
+    // rolls over), so a burst of warnings — e.g. a reload of a folder with several
+    // malformed scripts — doesn't pay a full file open/close per line.
+    private static StreamWriter? _writer;
+    private static string _writerDate = "";
 
     static Log()
     {
-        var dir = Path.Combine(
+        LogDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "PaletteShell",
             "logs");
 
-        LogPath = Path.Combine(dir, $"palette-shell-{DateTime.Now:yyyyMMdd}.log");
-
         try
         {
-            Directory.CreateDirectory(dir);
-            PruneOldLogs(dir);
+            Directory.CreateDirectory(LogDirectory);
+            PruneOldLogs(LogDirectory);
         }
         catch (Exception)
         {
@@ -46,16 +50,51 @@ internal static class Log
     {
         try
         {
-            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
+            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}";
             lock (WriteLock)
             {
-                File.AppendAllText(LogPath, line);
+                GetWriter()?.WriteLine(line);
             }
         }
         catch (Exception)
         {
             // Never let logging failures surface to the caller.
         }
+    }
+
+    // Returns the shared writer, opening (or rolling over) the day's file as needed.
+    // Must be called under WriteLock. A failed open leaves the writer null and the date
+    // marker unset, so the next write retries — same failure-mode behavior as the old
+    // open-per-line approach.
+    private static StreamWriter? GetWriter()
+    {
+        var today = DateTime.Now.ToString("yyyyMMdd");
+        if (today == _writerDate)
+        {
+            return _writer;
+        }
+
+        try { _writer?.Dispose(); }
+        catch (Exception) { }
+        _writer = null;
+        _writerDate = "";
+
+        try
+        {
+            // FileShare.ReadWrite keeps the held handle from locking out another process
+            // (or the user tailing the log) the way the old transient appends never did.
+            var stream = new FileStream(
+                Path.Combine(LogDirectory, $"palette-shell-{today}.log"),
+                FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+            _writer = new StreamWriter(stream) { AutoFlush = true };
+            _writerDate = today;
+        }
+        catch (Exception)
+        {
+            // Couldn't open the log file; stay a no-op and retry on the next write.
+        }
+
+        return _writer;
     }
 
     // Keeps the log directory from growing forever — one file per day, last week retained.

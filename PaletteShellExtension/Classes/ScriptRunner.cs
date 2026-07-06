@@ -57,6 +57,25 @@ internal static class ScriptRunner
         }
     }
 
+    /// <summary>Async counterpart of <see cref="AwaitRead"/> — same brief grace period,
+    /// but without pinning a thread while it waits.</summary>
+    private static async Task<string?> AwaitReadAsync(Task<string>? task)
+    {
+        if (task is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     private static readonly Lazy<bool> PwshAvailable = new(() => CanResolveOnPath("pwsh.exe"));
 
     public static string ResolveShell(string? host)
@@ -187,6 +206,110 @@ internal static class ScriptRunner
         {
             Log.Error($"Failed to launch script '{scriptPath}'", ex);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Async counterpart of <see cref="RunScriptAndWait"/> for callers that already run off
+    /// the UI path (the List/Markdown/Result pages): the wait for the child process is
+    /// awaited rather than blocked on, so a slow script doesn't pin a threadpool thread for
+    /// its whole run (up to the timeout) per in-flight query. The synchronous version stays
+    /// for the toolkit's <c>Invoke()</c> entry points, which are inherently blocking.
+    /// </summary>
+    public static async Task<ScriptResult?> RunScriptAndWaitAsync(
+        string scriptPath,
+        string args,
+        string host,
+        string? cwd,
+        Dictionary<string, string>? env = null,
+        bool requiresAdmin = false,
+        int? timeoutMs = null,
+        bool reportProgress = true)
+    {
+        Process? proc = null;
+
+        var progress = reportProgress
+            ? ScriptStatus.ShowRunning(Path.GetFileNameWithoutExtension(scriptPath))
+            : null;
+
+        try
+        {
+            var psi = BuildProcessStartInfo(
+                scriptPath: scriptPath,
+                args: args,
+                host: host,
+                cwd: cwd,
+                env: env,
+                requiresAdmin: requiresAdmin,
+                captureOutput: !requiresAdmin);
+
+            proc = Process.Start(psi);
+
+            if (proc == null)
+            {
+                return null;
+            }
+
+            var result = new ScriptResult();
+
+            // Same deadlock/timeout reasoning as the synchronous version: kick off both
+            // stream reads before waiting so a full pipe buffer can't wedge the child and
+            // a hung child can't defeat the timeout.
+            Task<string>? stdoutTask = null;
+            Task<string>? stderrTask = null;
+            if (!requiresAdmin)
+            {
+                stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                stderrTask = proc.StandardError.ReadToEndAsync();
+            }
+
+            if (timeoutMs.HasValue)
+            {
+                try
+                {
+                    await proc.WaitForExitAsync().WaitAsync(TimeSpan.FromMilliseconds(timeoutMs.Value)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    result.TimedOut = true;
+                    Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed");
+                    try { proc.Kill(entireProcessTree: true); }
+                    catch (Exception)
+                    {
+                        // Ignore failures killing the process tree.
+                    }
+                    // Killing closes the pipes, so the reads complete with whatever was
+                    // buffered; capture that partial output before returning.
+                    result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
+                    result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
+                    return result;
+                }
+            }
+            else
+            {
+                await proc.WaitForExitAsync().ConfigureAwait(false);
+            }
+
+            // The process has exited, so the streams are closed and the reads finish
+            // promptly; this also ensures async I/O completion before we read ExitCode.
+            result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
+            result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
+            result.ExitCode = proc.ExitCode;
+            if (result.ExitCode != 0)
+            {
+                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}");
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to run script '{scriptPath}'", ex);
+            return null;
+        }
+        finally
+        {
+            proc?.Dispose();
+            ScriptStatus.Hide(progress);
         }
     }
 

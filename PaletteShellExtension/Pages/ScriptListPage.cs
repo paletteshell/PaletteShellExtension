@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Pages;
@@ -47,8 +48,11 @@ internal sealed partial class ScriptListPage : DynamicListPage
     private IListItem[] _items = [];
     private bool _started;
 
-    // Guards against stale async runs clobbering newer ones as the user types.
-    private int _queryVersion;
+    // Cancelled and replaced on each keystroke: a pending debounce delay stops immediately,
+    // and a run already in flight discards its results instead of clobbering newer ones.
+    // Superseded sources are dropped without Dispose — they hold no timer once cancelled,
+    // and the in-flight task may still be reading the token.
+    private CancellationTokenSource? _debounceCts;
 
     // Debounce so we don't launch a process on every keystroke.
     private const int DebounceMs = 300;
@@ -106,19 +110,20 @@ internal sealed partial class ScriptListPage : DynamicListPage
         }
 
         // Dynamic provider: re-run the script with the new query, debounced.
-        var version = ++_queryVersion;
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _debounceCts, cts)?.Cancel();
         IsLoading = true;
 
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(DebounceMs);
-                if (version != _queryVersion)
-                {
-                    return; // Superseded by a newer keystroke.
-                }
-                Run(newSearch, version);
+                await Task.Delay(DebounceMs, cts.Token);
+                await ExecuteAsync(newSearch, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Superseded by a newer keystroke.
             }
             catch (Exception)
             {
@@ -128,21 +133,18 @@ internal sealed partial class ScriptListPage : DynamicListPage
     }
 
     /// <summary>Runs the script (with the query as its argument, if dynamic) and rebuilds the
-    /// item list. <paramref name="version"/>, when given, is checked after the run so a slow
+    /// item list. <paramref name="cancellationToken"/> is checked after the run so a slow
     /// query can't overwrite the results of a newer one.</summary>
-    private void Run(string? query, int? version = null)
+    private void Run(string? query, CancellationToken cancellationToken = default)
     {
-        if (version is null)
-        {
-            _ = Task.Run(() => Execute(query, version));
-        }
-        else
-        {
-            Execute(query, version);
-        }
+        // Task.Run keeps the synchronous prefix (Process.Start) off the caller's thread —
+        // GetItems calls this — and ExecuteAsync catches everything, so the abandoned task
+        // can't fault. The thread is released at the first await; the script's run time is
+        // spent awaiting, not pinning a pool thread.
+        _ = Task.Run(() => ExecuteAsync(query, cancellationToken));
     }
 
-    private void Execute(string? query, int? version)
+    private async Task ExecuteAsync(string? query, CancellationToken cancellationToken)
     {
         try
         {
@@ -151,8 +153,11 @@ internal sealed partial class ScriptListPage : DynamicListPage
             var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
 
             // Elevated scripts can't have their output captured, so List mode always
-            // runs unelevated — there'd be nothing to list otherwise.
-            var result = ScriptRunner.RunScriptAndWait(
+            // runs unelevated — there'd be nothing to list otherwise. Awaited rather than
+            // blocked on so a slow provider doesn't pin a threadpool thread per keystroke.
+            // The token deliberately isn't passed down: a superseded run's process finishes
+            // (or times out) on its own, matching the old version-counter behavior.
+            var result = await ScriptRunner.RunScriptAndWaitAsync(
                 scriptPath: _scriptPath,
                 args: args,
                 host: _host,
@@ -161,20 +166,23 @@ internal sealed partial class ScriptListPage : DynamicListPage
                 requiresAdmin: false,
                 timeoutMs: timeout);
 
-            if (version is not null && version != _queryVersion)
+            if (cancellationToken.IsCancellationRequested)
             {
-                return; // A newer query finished after we started; discard this one.
+                return; // A newer query arrived while this ran; discard this one.
             }
 
             _items = BuildItems(result);
         }
         catch (Exception ex)
         {
-            _items = [Message($"Error running script: {ex.Message}")];
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _items = [Message($"Error running script: {ex.Message}")];
+            }
         }
         finally
         {
-            if (version is null || version == _queryVersion)
+            if (!cancellationToken.IsCancellationRequested)
             {
                 IsLoading = false;
                 RaiseItemsChanged();

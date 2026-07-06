@@ -78,15 +78,16 @@ internal sealed partial class ScriptResultPage : ListPage
         _ = Task.Run(Execute);
     }
 
-    private void Execute()
+    private async Task Execute()
     {
         try
         {
             var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
 
             // Elevated scripts can't have their output captured, so Result mode always runs
-            // unelevated — there'd be no value to show otherwise.
-            var result = ScriptRunner.RunScriptAndWait(
+            // unelevated — there'd be no value to show otherwise. Awaited rather than
+            // blocked on so the script's run time doesn't pin a threadpool thread.
+            var result = await ScriptRunner.RunScriptAndWaitAsync(
                 scriptPath: _scriptPath,
                 args: "",
                 host: _host,

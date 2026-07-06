@@ -261,7 +261,6 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
         var group = string.IsNullOrWhiteSpace(options.Group) ? "General" : options.Group;
         sb.Append(CultureInfo.InvariantCulture, $"[ScriptGroup('{EscapeSingleQuoted(group)}')]\n");
-        sb.Append("[ScriptVersion('1.0.0')]\n");
 
         // Stamps the app version the script was scaffolded against, so a copy of this script
         // taken to an older PaletteShell install shows "Requires an update" instead of running

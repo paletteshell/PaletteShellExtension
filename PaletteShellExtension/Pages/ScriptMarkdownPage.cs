@@ -64,15 +64,16 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
         return [_content];
     }
 
-    private void RunAndRender()
+    private async Task RunAndRender()
     {
         try
         {
             var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
 
             // Elevated scripts can't have their output captured, so Markdown mode
-            // always runs unelevated to be able to render the result.
-            var result = ScriptRunner.RunScriptAndWait(
+            // always runs unelevated to be able to render the result. Awaited rather than
+            // blocked on so the script's run time doesn't pin a threadpool thread.
+            var result = await ScriptRunner.RunScriptAndWaitAsync(
                 scriptPath: _scriptPath,
                 args: _args,
                 host: _host,

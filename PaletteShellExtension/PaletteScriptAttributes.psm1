@@ -60,12 +60,6 @@ class ScriptTagsAttribute : Attribute {
     ScriptTagsAttribute([string]$tags) { $this.Tags = $tags }
 }
 
-# Script version (recommended: SemVer, e.g. '1.0.0'). Lets tools detect when a newer copy is available.
-class ScriptVersionAttribute : Attribute {
-    [string]$Version
-    ScriptVersionAttribute([string]$version) { $this.Version = $version }
-}
-
 # Minimum PaletteShell app version (SemVer) required to run this script. PaletteShell hides
 # the script (with an explanatory row) instead of running it when the installed app is older.
 class RequiresPaletteShellMinimumAttribute : Attribute {

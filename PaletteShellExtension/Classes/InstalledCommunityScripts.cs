@@ -8,9 +8,8 @@ using System.Text.Json.Nodes;
 namespace PaletteShellExtension.Classes;
 
 /// <summary>Where a locally installed script came from in the community catalog, so an
-/// update check can compare its recorded sha against the catalog's current one. Version is
-/// informational only (display), not used for update detection.</summary>
-internal sealed record InstalledCommunityScript(string SourcePath, string Sha, string? Version = null);
+/// update check can compare its recorded sha against the catalog's current one.</summary>
+internal sealed record InstalledCommunityScript(string SourcePath, string Sha);
 
 /// <summary>
 /// Tracks which local scripts were installed from the community catalog, so the palette can
@@ -23,6 +22,8 @@ internal sealed record InstalledCommunityScript(string SourcePath, string Sha, s
 internal sealed class InstalledCommunityScripts
 {
     private const string StoreFileName = "community-installed.json";
+
+    private static readonly JsonSerializerOptions SaveOptions = new() { WriteIndented = true };
 
     private readonly string _rootDirectory;
     private readonly string _storePath;
@@ -39,9 +40,9 @@ internal sealed class InstalledCommunityScripts
         _installed.TryGetValue(KeyFor(localPath), out record);
 
     /// <summary>Records (or updates) the install and persists the change.</summary>
-    public void Record(string localPath, string sourcePath, string? sha, string? version = null)
+    public void Record(string localPath, string sourcePath, string? sha)
     {
-        _installed[KeyFor(localPath)] = new InstalledCommunityScript(sourcePath, sha ?? "", version);
+        _installed[KeyFor(localPath)] = new InstalledCommunityScript(sourcePath, sha ?? "");
         Save();
     }
 
@@ -76,7 +77,7 @@ internal sealed class InstalledCommunityScripts
                         var source = obj?["sourcePath"]?.ToString();
                         if (source is not null)
                         {
-                            map[key] = new InstalledCommunityScript(source, obj?["sha"]?.ToString() ?? "", obj?["version"]?.ToString());
+                            map[key] = new InstalledCommunityScript(source, obj?["sha"]?.ToString() ?? "");
                         }
                     }
 
@@ -99,20 +100,14 @@ internal sealed class InstalledCommunityScripts
             var root = new JsonObject();
             foreach (var (key, value) in _installed.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
             {
-                var entry = new JsonObject
+                root[key] = new JsonObject
                 {
                     ["sourcePath"] = value.SourcePath,
                     ["sha"] = value.Sha,
                 };
-                if (value.Version is not null)
-                {
-                    entry["version"] = value.Version;
-                }
-
-                root[key] = entry;
             }
 
-            File.WriteAllText(_storePath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(_storePath, root.ToJsonString(SaveOptions));
         }
         catch (Exception)
         {
