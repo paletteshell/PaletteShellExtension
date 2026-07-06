@@ -142,7 +142,7 @@ internal sealed class ScriptParameterForm : FormContent
                     requiresAdmin: false,
                     timeoutMs: timeout);
 
-                body = FormatMarkdownResult(result);
+                body = FormatInPageResult(result);
             }
             catch (Exception ex)
             {
@@ -162,9 +162,9 @@ internal sealed class ScriptParameterForm : FormContent
         return CommandResult.KeepOpen();
     }
 
-    /// <summary>Turns a run result into the Markdown body to render, mirroring the no-parameter
-    /// Markdown page: failures and empty output become a short note rather than a blank panel.</summary>
-    private static string FormatMarkdownResult(ScriptRunner.ScriptResult? result)
+    /// <summary>Turns a run result into the Markdown body to render: failures and empty output
+    /// become a short note rather than a blank panel.</summary>
+    private static string FormatInPageResult(ScriptRunner.ScriptResult? result)
     {
         if (result is null)
             return "_Failed to start script._";
@@ -180,9 +180,10 @@ internal sealed class ScriptParameterForm : FormContent
                 : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
         }
 
-        return string.IsNullOrWhiteSpace(result.StandardOutput)
-            ? "_Script completed with no output._"
-            : result.StandardOutput!;
+        if (string.IsNullOrWhiteSpace(result.StandardOutput))
+            return "_Script completed with no output._";
+
+        return result.StandardOutput!;
     }
 
     /// <summary>Runs the script with the already-built argument line and turns its result into

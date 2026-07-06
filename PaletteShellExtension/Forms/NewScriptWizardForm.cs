@@ -59,6 +59,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
         { "title": "Markdown — render output as Markdown", "value": "Markdown" },
         { "title": "Result — single copyable result", "value": "Result" },
         { "title": "List — searchable list of items", "value": "List" },
+        { "title": "Open — open a URL, file, or folder", "value": "Open" },
         { "title": "File — open output in editor", "value": "File" }
       ]
     },
@@ -260,6 +261,12 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
         var group = string.IsNullOrWhiteSpace(options.Group) ? "General" : options.Group;
         sb.Append(CultureInfo.InvariantCulture, $"[ScriptGroup('{EscapeSingleQuoted(group)}')]\n");
+        sb.Append("[ScriptVersion('1.0.0')]\n");
+
+        // Stamps the app version the script was scaffolded against, so a copy of this script
+        // taken to an older PaletteShell install shows "Requires an update" instead of running
+        // against attributes/behavior it doesn't recognize yet.
+        sb.Append(CultureInfo.InvariantCulture, $"[RequiresPaletteShellMinimum('{AppVersion.Current}')]\n");
 
         if (!string.IsNullOrWhiteSpace(options.Icon))
             sb.Append(CultureInfo.InvariantCulture, $"[ScriptIcon('{EscapeSingleQuoted(options.Icon)}')]\n");
@@ -303,6 +310,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
         "List" =>
             "# Print newline-delimited items, or a JSON array of objects (title/subtitle/value/url/icon) for richer items.\n" +
             "Get-ChildItem -Name\n",
+
+        "Open" =>
+            "# Emit a URL, file path, or folder path; Open mode launches the first non-empty line.\n" +
+            "[System.IO.Path]::GetTempPath()\n",
 
         "Markdown" =>
             "# Captured stdout is rendered as Markdown on its own page.\n" +

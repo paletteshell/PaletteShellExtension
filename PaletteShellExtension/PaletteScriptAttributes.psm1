@@ -35,13 +35,14 @@ class ScriptTimeoutAttribute : Attribute {
 
 # Output handling
 class ScriptOutputAttribute : Attribute {
-    # None, Toast, Clipboard, Markdown, Result, File, or List.
+    # None, Toast, Clipboard, Markdown, Result, List, Open, or File.
     # File writes stdout to a temp file and opens it in the editor; append an
     # extension hint after a colon to control the file type, e.g. 'File:csv' or 'File:json'.
     # Result shows stdout as a single copyable result (Enter copies; a "Run again"
     # command regenerates) — like a calculator answer; good for generators.
     # List parses stdout (newline-delimited, or a JSON array) into a searchable
     # results page where each line/object becomes a selectable item.
+    # Open launches the first non-empty stdout line as a URL, file, or folder path.
     [string]$Mode
     ScriptOutputAttribute([string]$mode) { $this.Mode = $mode }
 }
@@ -50,6 +51,35 @@ class ScriptOutputAttribute : Attribute {
 class ScriptGroupAttribute : Attribute {
     [string]$Name
     ScriptGroupAttribute([string]$name) { $this.Name = $name }
+}
+
+# Free-form tags, comma-delimited (e.g. [ScriptTags('network,dns,admin')]). Used by tooling
+# such as the Script Manager's catalog browser.
+class ScriptTagsAttribute : Attribute {
+    [string]$Tags
+    ScriptTagsAttribute([string]$tags) { $this.Tags = $tags }
+}
+
+# Script version (recommended: SemVer, e.g. '1.0.0'). Lets tools detect when a newer copy is available.
+class ScriptVersionAttribute : Attribute {
+    [string]$Version
+    ScriptVersionAttribute([string]$version) { $this.Version = $version }
+}
+
+# Minimum PaletteShell app version (SemVer) required to run this script. PaletteShell hides
+# the script (with an explanatory row) instead of running it when the installed app is older.
+class RequiresPaletteShellMinimumAttribute : Attribute {
+    [string]$Version
+    RequiresPaletteShellMinimumAttribute([string]$version) { $this.Version = $version }
+}
+
+# Maximum PaletteShell app version (SemVer) this script still works on - for a script that
+# depends on behavior later removed or changed. PaletteShell hides the script (with an
+# explanatory row) instead of running it when the installed app is newer. Optional; most scripts
+# should omit this and only set RequiresPaletteShellMinimum.
+class RequiresPaletteShellMaximumAttribute : Attribute {
+    [string]$Version
+    RequiresPaletteShellMaximumAttribute([string]$version) { $this.Version = $version }
 }
 
 # Icon emoji or glyph

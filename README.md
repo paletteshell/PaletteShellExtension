@@ -4,7 +4,7 @@
 
 **PaletteShell** is a [Windows Command Palette](https://learn.microsoft.com/windows/powertoys/command-palette/overview) extension that lets you run custom PowerShell scripts directly from the Command Palette. Transform clipboard text, generate GUIDs, format JSON, and automate your daily workflows — all without leaving your keyboard.
 
-> 💡 Looking for ready-made scripts? Browse the community script library at **[paletteshell/PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** — also reachable from inside the palette via the **"Find more scripts"** command.
+> 💡 Looking for ready-made scripts? Browse the community script library at **[paletteshell/PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** — also reachable from inside the palette via **"Browse community scripts"**, which opens the Script Manager when installed and falls back to the GitHub repo.
 
 ## 🌟 Features
 
@@ -18,6 +18,7 @@
 - **⏳ Progress Feedback**: A "Running &lt;script&gt;…" spinner shows in the status bar while any script executes, so a slow script no longer looks frozen
 - **📌 Pin to Top**: Pin your most-used scripts so they always sort to the top of the list
 - **🗂️ Script Management**: Delete a script to the Recycle Bin (with confirmation) or reveal it in File Explorer — right from its context menu
+- **☁ Community Script Manager**: Open the companion Script Manager app to browse, install, and update community scripts, with a GitHub fallback when the app isn't installed
 - **✏️ Open in Editor**: Jump straight to any script's source in your `$EDITOR`/`$VISUAL` (Notepad by default)
 - **⚡ Cross-Platform PowerShell**: Supports both PowerShell Core (`pwsh`) and Windows PowerShell (`powershell`)
 - **🤖 AI-Ready**: Ships an `AGENTS.md` authoring spec into your scripts folder so AI coding agents can write compliant scripts for you on the fly
@@ -48,7 +49,7 @@ The list always begins with four built-in actions:
 - **Open scripts folder** — opens your configured scripts folder in Explorer.
 - **Reload scripts** — re-scans the folder so new or changed scripts appear.
 - **Create new script** — opens a guided wizard that scaffolds a new `.ps1` with metadata headers.
-- **Find more scripts** — opens the community [PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts) repository in your browser.
+- **Browse community scripts** — opens the Script Manager, or falls back to the community [PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts) repository if it isn't installed.
 
 Every script item carries a context menu (right-click, or the ⋯ commands) with:
 
@@ -57,7 +58,7 @@ Every script item carries a context menu (right-click, or the ⋯ commands) with
 - **Reveal in File Explorer** — opens Explorer with the script file selected, for managing it directly.
 - **Delete script** — sends the script to the Recycle Bin after a confirmation dialog, then reloads the list.
 
-Scripts are ordered **pinned first, then alphabetically by their displayed title** (the `.SYNOPSIS`, which often differs from the file name). Each script also shows its **group** as a tag; pinned scripts additionally carry a **📌 Pinned** tag. Scripts without a `[ScriptIcon]` get a default terminal glyph so every row is scannable.
+Scripts are ordered **pinned first, then alphabetically by their displayed title** (the `.SYNOPSIS`, which often differs from the file name). Scripts without a `[ScriptIcon]` get a default terminal glyph so every row is scannable.
 
 If a script fails to parse (e.g. a malformed `param()` block), it isn't dropped silently — it still appears with a **⚠ Couldn't load this script** subtitle and its context menu, so you can open it to fix or delete it.
 
@@ -65,7 +66,7 @@ If a script fails to parse (e.g. a malformed `param()` block), it isn't dropped 
 
 ### Parsing the manifest
 
-For each script, `PowerShellScriptParser` parses the file using the official PowerShell AST parser (`System.Management.Automation.Language.Parser`) — it never executes the script just to read metadata. From the AST it extracts:
+For each script, `PowerShellScriptParser` parses the file with a lightweight text parser — it never executes the script just to read metadata. From the script text it extracts:
 
 - **Title** from the comment-based help `.SYNOPSIS` (falls back to the file name).
 - **Description** from `.DESCRIPTION`.
@@ -78,10 +79,10 @@ For each script, `PowerShellScriptParser` parses the file using the official Pow
 
 Selecting a script item routes to one of these paths, based on its metadata:
 
-- **Has parameters** → opens `ScriptParameterFormPage`, an auto-generated form. Once you submit, the collected values are passed to the script.
+- **Has parameters** → opens `ScriptParameterFormPage`, an auto-generated form. Once you submit, the collected values are passed to the script. `List` scripts are the exception: their first parameter is treated as the search query for live-provider behavior.
 - **No parameters, `[ScriptOutput('Markdown')]`** → opens `ScriptMarkdownPage`, which runs the script and renders its stdout as formatted Markdown.
 - **No parameters, `[ScriptOutput('Result')]`** → opens `ScriptResultPage`, which runs the script and shows its stdout as a single copyable result (see [Result output](#result-output)).
-- **No parameters, `[ScriptOutput('List')]`** → opens `ScriptListPage`, which runs the script and turns its stdout into a searchable list of items (see [List output](#list-output)).
+- **`[ScriptOutput('List')]`** → opens `ScriptListPage`, which runs the script and turns its stdout into a searchable list of items (see [List output](#list-output)).
 - **No parameters, any other output mode** → runs the script directly via `RunScriptCommand`.
 
 Execution is handled by `ScriptRunner`, which launches `pwsh.exe` (or `powershell.exe`) with `-STA -NoProfile -ExecutionPolicy Bypass`. When the `PaletteScriptAttributes.psm1` module is present alongside the script, the runner imports it and dot-sources the script so the custom attributes resolve and the helper functions (clipboard, logging) are available; the information stream is redirected to stdout so `Write-Host` output is captured.
@@ -95,12 +96,13 @@ Whether PaletteShell waits for the script depends on its output mode and timeout
 | Condition | Behavior |
 |-----------|----------|
 | `[ScriptOutput('None')]` and no `[ScriptTimeout]` | Fire-and-forget — the process is started and a "Script completed" toast is shown. |
-| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`Result`/`List`/`File`) | PaletteShell waits (up to the declared timeout, or the [default timeout setting](#-settings), 30s unless changed), captures stdout/stderr, and surfaces the result. |
+| Any other output mode (`Toast`/`Clipboard`/`Markdown`/`Result`/`List`/`Open`/`File`) | PaletteShell waits (up to the declared timeout, or the [default timeout setting](#-settings), 30s unless changed), captures stdout/stderr, and surfaces the result. |
 | `[ScriptTimeout(ms)]` set | PaletteShell waits up to `ms`, then kills the process tree on timeout. |
 | `[ScriptOutput('Clipboard')]` | Captured output is copied to the clipboard. |
 | `[ScriptOutput('Markdown')]` | Captured output is rendered as Markdown on its own page. |
 | `[ScriptOutput('Result')]` | Captured output is shown as a single copyable result on its own page (Enter copies; "Run again" regenerates). |
 | `[ScriptOutput('List')]` | Captured output is parsed into a searchable list of selectable items on its own page. |
+| `[ScriptOutput('Open')]` | The first non-empty output line is opened as a URL, file, or folder path. |
 | `[ScriptOutput('File')]` | Captured output is written to a temp file and opened in your editor. |
 | `[ConfirmBeforeRun('msg')]` | Selecting the script prompts a yes/no dialog before it runs. |
 | `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode. |
@@ -131,7 +133,7 @@ These are extension-wide defaults, not per-script overrides — a script's own `
 1. Install the extension (from the Microsoft Store, or by building and deploying the MSIX package — see [Building](#-building-from-source)).
 2. Open the Command Palette and type **PaletteShell**.
 3. The first time, choose a scripts folder (or accept the suggested `Documents\PaletteShellScripts`).
-4. Browse the bundled sample scripts, choose **Create new script** to scaffold your own, or **Find more scripts** to grab one from the [community repo](https://github.com/paletteshell/PaletteShellScripts).
+4. Browse the bundled sample scripts, choose **Create new script** to scaffold your own, or **Browse community scripts** to open the Script Manager or the [community repo](https://github.com/paletteshell/PaletteShellScripts).
 5. Edit your scripts in your scripts folder and run **Reload scripts** to see changes.
 
 ## ✍️ Creating Your Own Scripts
@@ -185,7 +187,7 @@ The agent reads `AGENTS.md`, produces a compliant script in the folder, and you 
 | `[RequiresElevation()]` | Run the script with administrator rights |
 | `[ConfirmBeforeRun('message')]` | Prompt a yes/no confirmation (with `message`) before running |
 | `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture. Omit it to use the [default timeout setting](#-settings) |
-| `[ScriptGroup('Category')]` | Group/category name (shown as a tag) |
+| `[ScriptGroup('Category')]` | Group/category name for tooling such as the Script Manager catalog browser |
 | `[ScriptIcon('🚀')]` | Icon emoji or glyph shown in the palette |
 | `[ScriptOutput('None')]` | Output mode (see below) |
 | `[ScriptEnv('VAR', 'value')]` | Set an environment variable (repeat for multiple) |
@@ -206,6 +208,7 @@ The agent reads `AGENTS.md`, produces a compliant script in the folder, and you 
 - **Markdown** — run the script and render its output as formatted Markdown on its own page
 - **Result** — run the script and show its output as a single result you can copy (press Enter), with a **Run again** command to regenerate — like a calculator answer. Ideal for generators such as a new GUID, password, or token (see [Result output](#result-output))
 - **List** — parse the script's output into a searchable list of selectable items, turning the script into a search/pick provider (see [List output](#list-output))
+- **Open** — open the first non-empty output line as a URL, file, or folder path
 - **File** — write captured output to a temp file and open it in your editor (`$VISUAL`/`$EDITOR`, else Notepad). Best for large or structured output that's unwieldy in a toast. Append an extension hint after a colon to control the file type:
 
   ```powershell
@@ -275,6 +278,27 @@ param([string]$Query)
 ) | ConvertTo-Json -AsArray -Compress
 ```
 
+### Open output
+
+`[ScriptOutput('Open')]` runs the script, takes the first non-empty line from stdout, and asks Windows to open it with the default app. The target can be a URL, a file path, or a folder path.
+
+```powershell
+[ScriptOutput('Open')]
+param()
+
+# Open the user's temp folder.
+[System.IO.Path]::GetTempPath()
+```
+
+For URLs:
+
+```powershell
+[ScriptOutput('Open')]
+param()
+
+'https://learn.microsoft.com/windows/powertoys/command-palette/overview'
+```
+
 ### Confirmation prompts
 
 Add `[ConfirmBeforeRun('message')]` to gate a script behind a yes/no dialog — the natural companion to `[RequiresElevation()]` for destructive scripts. Selecting the script (or, for a parameterized script, submitting the form) shows the dialog with your message; the script runs only if you accept.
@@ -324,6 +348,7 @@ The extension ships with ready-to-use scripts that double as working examples:
 | `Clipboard-UnixTimestamp` | Insert/convert a Unix timestamp |
 | `System-Report` | Render a system information report (demonstrates Markdown output) |
 | `Export-ProcessList` | Snapshot running processes as CSV and open it in Excel (demonstrates File output) |
+| `Open-TempFolder` | Open the user's temp folder in File Explorer (demonstrates Open output) |
 | `Get-PublicIP` | Look up this machine's public IP and show it as a copyable result (demonstrates Result output) |
 | `Git-Branches` | Type a repo folder path and pick one of its branches to copy (demonstrates List output as a live provider) |
 | `Restart-Explorer` | Restart the Windows Explorer shell after a confirmation prompt (demonstrates ConfirmBeforeRun) |
@@ -354,7 +379,7 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `PaletteShellExtension.cs` | Extension entry point; provides the commands provider to Command Palette |
 | `PaletteShellExtensionCommandsProvider.cs` | Registers the top-level PaletteShell command |
 | `Pages/PaletteShellExtensionPage.cs` | Main list page — discovery, sample/module copying, item building |
-| `PowerShellScriptParser.cs` | Parses script metadata and parameters from the PowerShell AST |
+| `PowerShellScriptParser.cs` | Parses script metadata and parameters with a lightweight text parser |
 | `Classes/ScriptManifest.cs`, `ScriptParameter.cs` | Parsed metadata models |
 | `Classes/ScriptRunner.cs` | Builds the process and runs scripts (fire-and-forget or wait-and-capture) |
 | `Classes/ScriptOutputHandler.cs` | Maps captured output to a result per the script's output mode |
@@ -381,7 +406,11 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 
 ## 🤝 Community Scripts
 
-The **[PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** repository is a growing, community-maintained collection of scripts ready to drop into your scripts folder. Grab the ones you find useful, or contribute your own. You can open it any time from the palette's **"Find more scripts"** command.
+The **[PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts)** repository is a growing, community-maintained collection of scripts ready to drop into your scripts folder. Grab the ones you find useful, or contribute your own.
+
+PaletteShell also pairs with the companion **Script Manager** application, which gives the community library a dedicated browsing, install, and update experience outside the Command Palette. Install it from the **[Microsoft Store](TODO_SCRIPT_MANAGER_STORE_URL)**, or review its source code in the **[Script Manager repository](TODO_SCRIPT_MANAGER_REPO_URL)**.
+
+Use **"Browse community scripts"** from PaletteShell to launch Script Manager; if the app isn't installed yet, PaletteShell opens the GitHub repo instead.
 
 ## Need Help?
 

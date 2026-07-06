@@ -1,5 +1,7 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
+using System.Diagnostics;
+using System.Linq;
 
 namespace PaletteShellExtension.Classes;
 
@@ -22,6 +24,27 @@ internal static class ScriptOutputHandler
                 }
                 return CommandResult.ShowToast("Script completed");
 
+            // Treat stdout as a URL, file, or folder and let Windows open it with the
+            // registered default app. The first non-empty line is the target so scripts can
+            // use Write-Output without worrying about a trailing newline.
+            case "open":
+                var target = GetOpenTarget(output);
+                if (target is null)
+                {
+                    return CommandResult.ShowToast("Script completed without an open target");
+                }
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+                    return CommandResult.ShowToast("Opened script output");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"Failed to open script output target '{target}': {ex.Message}");
+                    return CommandResult.ShowToast($"Couldn't open script output: {ex.Message}");
+                }
+
             // Write stdout to a temp file and open it in the user's editor. Useful for
             // output that's too large or structured to be readable in a toast.
             case "file":
@@ -42,6 +65,20 @@ internal static class ScriptOutputHandler
                     ? CommandResult.ShowToast(output)
                     : CommandResult.ShowToast("Script completed");
         }
+    }
+
+    internal static string? GetOpenTarget(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return null;
+        }
+
+        return output
+            .Replace("\r\n", "\n")
+            .Split('\n')
+            .Select(line => line.Trim().Trim('"'))
+            .FirstOrDefault(line => line.Length > 0);
     }
 
     private static void TrySetClipboard(string text)

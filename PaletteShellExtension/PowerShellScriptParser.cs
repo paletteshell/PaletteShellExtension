@@ -33,72 +33,91 @@ internal static partial class PowerShellScriptParser
         try
         {
             var content = File.ReadAllText(ps1Path, Encoding.UTF8);
-
-            var help = ParseCommentHelp(content);
-
-            var manifest = new ScriptManifest
-            {
-                Title = string.IsNullOrWhiteSpace(help.Synopsis)
-                    ? Path.GetFileNameWithoutExtension(ps1Path)
-                    : help.Synopsis!,
-                Description = help.Description,
-                Parameters = []
-            };
-
-            // Strip comments so structural parsing isn't confused by help text or
-            // per-parameter line comments, then locate the param(...) block.
-            var cleaned = RemoveComments(content);
-            var paramKeyword = ParamKeywordRegex().Match(cleaned);
-
-            string attributeZone;
-            string? paramBlock = null;
-            if (paramKeyword.Success)
-            {
-                var openParen = cleaned.IndexOf('(', paramKeyword.Index);
-                if (openParen >= 0)
-                {
-                    paramBlock = ExtractBalanced(cleaned, openParen, '(', ')');
-                }
-                attributeZone = cleaned[..paramKeyword.Index];
-            }
-            else
-            {
-                attributeZone = cleaned;
-            }
-
-            // Script-level [Script*] attributes live before the param keyword.
-            ParseScriptAttributes(attributeZone, manifest);
-
-            // #Requires -RunAsAdministrator (checked against the raw text; the line is a comment)
-            if (content.Contains("#Requires -RunAsAdministrator", StringComparison.OrdinalIgnoreCase))
-            {
-                manifest.RequiresAdmin = true;
-            }
-
-            if (paramBlock is not null)
-            {
-                foreach (var chunk in SplitTopLevel(paramBlock, ','))
-                {
-                    if (string.IsNullOrWhiteSpace(chunk))
-                    {
-                        continue;
-                    }
-
-                    var parameter = ParseParameter(chunk, help);
-                    if (parameter is not null)
-                    {
-                        manifest.Parameters.Add(parameter);
-                    }
-                }
-            }
-
-            return manifest;
+            return ParseManifestFromContent(content, Path.GetFileNameWithoutExtension(ps1Path));
         }
         catch (Exception ex)
         {
             Log.Warn($"Failed to parse manifest for '{ps1Path}': {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>Parses a manifest from raw script text rather than a file on disk — used for
+    /// embedded sample-script resources, which aren't written to disk until after this decides
+    /// whether they should be. <paramref name="fallbackTitle"/> stands in for the file name
+    /// when there's no <c>.SYNOPSIS</c> and (unlike <see cref="TryParseManifest"/>) no path to
+    /// derive one from.</summary>
+    internal static ScriptManifest ParseManifestFromContent(string content, string fallbackTitle = "")
+    {
+        var help = ParseCommentHelp(content);
+
+        var manifest = new ScriptManifest
+        {
+            Title = string.IsNullOrWhiteSpace(help.Synopsis) ? fallbackTitle : help.Synopsis!,
+            Description = help.Description,
+            Parameters = []
+        };
+
+        // Strip comments so structural parsing isn't confused by help text or
+        // per-parameter line comments, then locate the param(...) block.
+        var cleaned = RemoveComments(content);
+        var paramKeyword = ParamKeywordRegex().Match(cleaned);
+
+        string attributeZone;
+        string? paramBlock = null;
+        if (paramKeyword.Success)
+        {
+            var openParen = cleaned.IndexOf('(', paramKeyword.Index);
+            if (openParen >= 0)
+            {
+                paramBlock = ExtractBalanced(cleaned, openParen, '(', ')');
+            }
+            attributeZone = cleaned[..paramKeyword.Index];
+        }
+        else
+        {
+            attributeZone = cleaned;
+        }
+
+        // Script-level [Script*] attributes live before the param keyword.
+        ParseScriptAttributes(attributeZone, manifest);
+
+        // A script that predates [ScriptVersion(...)] (or simply omits it) is assumed to be
+        // at the baseline version rather than "no version" - keeps every manifest comparable
+        // instead of making callers special-case a null.
+        manifest.Version ??= "1.0.0";
+
+        // A script that predates [RequiresPaletteShellMinimum(...)] (or simply omits it) is
+        // assumed to require no more than 0.0.6 - the last PaletteShell version before
+        // RequiresPaletteShellMinimum itself existed. 1.0.0 would be the wrong baseline here:
+        // PaletteShell hasn't reached it yet, so that default would flag every existing script
+        // as incompatible.
+        manifest.MinVersion ??= "0.0.6";
+
+        // #Requires -RunAsAdministrator (checked against the raw text; the line is a comment)
+        if (content.Contains("#Requires -RunAsAdministrator", StringComparison.OrdinalIgnoreCase))
+        {
+            manifest.RequiresAdmin = true;
+        }
+
+        if (paramBlock is not null)
+        {
+            foreach (var chunk in SplitTopLevel(paramBlock, ','))
+            {
+                if (string.IsNullOrWhiteSpace(chunk))
+                {
+                    continue;
+                }
+
+                var parameter = ParseParameter(chunk, help);
+                if (parameter is not null)
+                {
+                    manifest.Parameters.Add(parameter);
+                }
+            }
+        }
+
+        return manifest;
     }
 
     public static string? ExpandPathTokens(string? path, string scriptPath)
@@ -295,6 +314,22 @@ internal static partial class PowerShellScriptParser
                     break;
                 case "ScriptGroup" when values.Count >= 1:
                     manifest.Group = values[0];
+                    break;
+                case "ScriptTags" when values.Count >= 1:
+                    manifest.Tags = values[0]
+                        .Split(',')
+                        .Select(t => t.Trim())
+                        .Where(t => t.Length > 0)
+                        .ToList();
+                    break;
+                case "ScriptVersion" when values.Count >= 1:
+                    manifest.Version = values[0];
+                    break;
+                case "RequiresPaletteShellMinimum" when values.Count >= 1:
+                    manifest.MinVersion = values[0];
+                    break;
+                case "RequiresPaletteShellMaximum" when values.Count >= 1:
+                    manifest.MaxVersion = values[0];
                     break;
                 case "ScriptIcon" when values.Count >= 1:
                     if (string.IsNullOrEmpty(values[0]))
@@ -494,7 +529,8 @@ internal static partial class PowerShellScriptParser
         "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
         "PSDefaultValue", "ArgumentCompleter",
         "ScriptHost", "ScriptCwd", "RequiresElevation", "ConfirmBeforeRun", "ScriptTimeout",
-        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptEnv"
+        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv", "ScriptVersion",
+        "RequiresPaletteShellMinimum", "RequiresPaletteShellMaximum"
     };
 
     /// <summary>Removes <c>&lt;# ... #&gt;</c> blocks and whole-line <c>#</c> comments.</summary>

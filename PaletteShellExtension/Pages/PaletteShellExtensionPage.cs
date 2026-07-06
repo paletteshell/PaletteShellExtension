@@ -8,6 +8,7 @@ using PaletteShellExtension.Classes;
 using PaletteShellExtension.Commands;
 using PaletteShellExtension.Pages;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,6 +29,9 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     private PinnedScripts? _pins;
     private List<string> _files = [];
     private IListItem[]? _cachedItems;
+    private readonly ConcurrentDictionary<string, CachedManifestEntry> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record CachedManifestEntry(long Length, DateTime LastWriteTimeUtc, ScriptManifest? Manifest);
 
     public PaletteShellExtensionPage()
     {
@@ -98,6 +102,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         if (configuredFolder is not null && !string.Equals(configuredFolder, _rootDirectory, StringComparison.OrdinalIgnoreCase))
         {
             _rootDirectory = configuredFolder;
+            _manifestCache.Clear();
             Directory.CreateDirectory(configuredFolder);
             _pins = new PinnedScripts(configuredFolder);
             CopySampleScripts(configuredFolder);
@@ -105,8 +110,10 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         }
 
         var rootDirectory = _rootDirectory;
+
         var files = Directory.GetFiles(rootDirectory, "*.ps1", SearchOption.TopDirectoryOnly);
         _files = [.. files];
+        PruneManifestCache(_files);
 
         // Use the page's change notification so CmdPal asks for items again.
         RaiseItemsChanged();
@@ -121,29 +128,48 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             .Where(n => n.Contains("SampleScripts") && n.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        var installedSamples = new InstalledSampleScripts(root);
+        var recordedAnySamples = false;
+
         foreach (var resourceName in resourceNames)
         {
             var fileName = resourceName.Split('.').Reverse().Skip(1).First() + ".ps1";
             var targetPath = Path.Combine(root, fileName);
 
-            // Only copy if the file doesn't exist (don't overwrite user modifications)
-            if (!File.Exists(targetPath))
+            try
             {
-                try
+                using var stream = assembly.GetManifestResourceStream(resourceName);
+                if (stream is null)
                 {
-                    using var stream = assembly.GetManifestResourceStream(resourceName);
-                    if (stream != null)
-                    {
-                        using var reader = new StreamReader(stream, Encoding.UTF8);
-                        var content = reader.ReadToEnd();
-                        File.WriteAllText(targetPath, content, new UTF8Encoding(false));
-                    }
+                    continue;
                 }
-                catch (Exception ex)
+
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                var content = reader.ReadToEnd();
+
+                var targetExists = File.Exists(targetPath);
+                var onDiskHash = targetExists ? SampleScriptSync.ComputeHash(File.ReadAllText(targetPath, Encoding.UTF8)) : null;
+                installedSamples.TryGet(fileName, out var record);
+                var shippedVersion = PowerShellScriptParser.ParseManifestFromContent(content).Version;
+
+                // Only (re)write when it's a fresh install, or a newer shipped version whose
+                // on-disk copy still matches what we last installed (i.e. not user-modified).
+                if (SampleScriptSync.ShouldOverwrite(targetExists, record, onDiskHash, shippedVersion))
                 {
-                    Log.Warn($"Failed to copy sample script '{fileName}': {ex.Message}");
+                    File.WriteAllText(targetPath, content, new UTF8Encoding(false));
+                    installedSamples.Record(fileName, shippedVersion, SampleScriptSync.ComputeHash(content), persist: false);
+                    recordedAnySamples = true;
                 }
             }
+            catch (Exception ex)
+            {
+                Log.Warn($"Failed to copy sample script '{fileName}': {ex.Message}");
+            }
+        }
+
+        if (recordedAnySamples)
+        {
+            installedSamples.Save();
         }
     }
 
@@ -243,7 +269,14 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             new ListItem(new OpenFolderCommand(rootDirectory)) { Title = "Open scripts folder" },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
             new ListItem(new NewScriptWizardPage(rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
-            new ListItem(new OpenLinkCommand("Find more scripts", "https://github.com/paletteshell/PaletteShellScripts", "")) { Title = "Find more scripts", Subtitle = "Browse the PaletteShellScripts repository on GitHub" },
+            new ListItem(new LaunchCommunityStoreCommand())
+            {
+                Title = "Browse community scripts",
+                Subtitle = "Open the Script Manager, or browse the community repo if it isn't installed",
+                MoreCommands = [
+                    new CommandContextItem(new OpenLinkCommand("View repository on GitHub", "https://github.com/paletteshell/PaletteShellScripts", "")),
+                ],
+            },
         ];
 
         // Script items are sorted below: pinned scripts first, then alphabetically by their
@@ -261,9 +294,25 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             var path = _files[i];
             try
             {
-                var manifest = PowerShellScriptParser.TryParseManifest(path);
+                var manifest = GetCachedManifest(path);
                 var title = manifest?.Title ?? Path.GetFileNameWithoutExtension(path);
                 var subtitle = manifest?.Description ?? path;
+
+                if (manifest is not null && !AppVersion.IsCompatible(manifest.MinVersion, manifest.MaxVersion, out var requiredVersion, out var tooNew))
+                {
+                    var incompatiblePinned = pins.IsPinned(path);
+                    var incompatibleSubtitle = tooNew
+                        ? $"⚠ Requires PaletteShell v{requiredVersion} or earlier — you have v{AppVersion.Current}"
+                        : $"⚠ Requires PaletteShell v{requiredVersion} or later — you have v{AppVersion.Current}";
+                    scriptResults[i] = (incompatiblePinned, title, new ListItem(new IncompatibleScriptCommand(requiredVersion!.ToString(), AppVersion.Current.ToString(), tooNew))
+                    {
+                        Title = title,
+                        Subtitle = incompatibleSubtitle,
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                    return;
+                }
 
                 var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
                 var wantsList = string.Equals(manifest?.Output, "List", StringComparison.OrdinalIgnoreCase);
@@ -333,8 +382,6 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     command = new RunScriptCommand(path, manifest);
                 }
 
-                var group = manifest?.Group;
-
                 var pinned = pins.IsPinned(path);
 
                 var listItem = new ListItem(command)
@@ -344,7 +391,6 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     Icon = !string.IsNullOrWhiteSpace(manifest?.IconGlyph)
                         ? new IconInfo(manifest.IconGlyph)
                         : DefaultScriptIcon,
-                    Tags = BuildTags(pinned, group),
                     MoreCommands = BuildContextCommands(path, pins)
                 };
 
@@ -363,7 +409,6 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     Title = errorTitle,
                     Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
                     Icon = new IconInfo(""), // Warning
-                    Tags = BuildTags(pinned, null),
                     MoreCommands = BuildContextCommands(path, pins)
                 });
             }
@@ -385,6 +430,42 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     // scannable instead of showing rows with no icon at all.
     private static readonly IconInfo DefaultScriptIcon = new(""); // CommandPrompt
 
+    private ScriptManifest? GetCachedManifest(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (_manifestCache.TryGetValue(path, out var cached)
+                && cached.Length == info.Length
+                && cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
+            {
+                return cached.Manifest;
+            }
+
+            var manifest = PowerShellScriptParser.TryParseManifest(path);
+            _manifestCache[path] = new CachedManifestEntry(info.Length, info.LastWriteTimeUtc, manifest);
+            return manifest;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Failed to stat manifest for '{path}': {ex.Message}");
+            _manifestCache.TryRemove(path, out _);
+            return PowerShellScriptParser.TryParseManifest(path);
+        }
+    }
+
+    private void PruneManifestCache(IEnumerable<string> currentFiles)
+    {
+        var current = new HashSet<string>(currentFiles, StringComparer.OrdinalIgnoreCase);
+        foreach (var cachedPath in _manifestCache.Keys)
+        {
+            if (!current.Contains(cachedPath))
+            {
+                _manifestCache.TryRemove(cachedPath, out _);
+            }
+        }
+    }
+
     // Per-script context menu shared by normal and error entries: pin, open, reveal, delete.
     private CommandContextItem[] BuildContextCommands(string path, PinnedScripts pins) =>
     [
@@ -393,24 +474,5 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         new CommandContextItem(new RevealInExplorerCommand(path)),
         new CommandContextItem(new DeleteScriptCommand(path, () => RefreshFiles())),
     ];
-
-    // Row tags: a "Pinned" marker (when pinned) followed by the script's group, if any. Either
-    // may be absent, so an unpinned, ungrouped script gets an empty tag list.
-    private static ITag[] BuildTags(bool pinned, string? group)
-    {
-        List<ITag> tags = [];
-        if (pinned)
-        {
-            tags.Add(new Tag("📌 Pinned"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(group))
-        {
-            tags.Add(new Tag(group));
-        }
-
-        return [.. tags];
-    }
-
 
 }

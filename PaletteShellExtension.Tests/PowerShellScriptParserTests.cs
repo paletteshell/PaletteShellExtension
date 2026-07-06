@@ -338,6 +338,86 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
+    public void ScriptTags_IsParsedAsCommaDelimitedList()
+    {
+        using var file = new TestScriptFile("[ScriptTags('network, dns,admin')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal(["network", "dns", "admin"], manifest!.Tags);
+    }
+
+    [Fact]
+    public void ScriptTags_Absent_YieldsEmptyList()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Empty(manifest!.Tags);
+    }
+
+    [Fact]
+    public void ScriptVersion_IsParsed()
+    {
+        using var file = new TestScriptFile("[ScriptVersion('1.2.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.2.0", manifest!.Version);
+    }
+
+    [Fact]
+    public void ScriptVersion_WhenOmitted_DefaultsTo1_0_0()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.0.0", manifest!.Version);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMinimum_IsParsed()
+    {
+        using var file = new TestScriptFile("[RequiresPaletteShellMinimum('1.2.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.2.0", manifest!.MinVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMinimum_WhenOmitted_DefaultsTo0_0_6()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("0.0.6", manifest!.MinVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMaximum_IsParsed()
+    {
+        using var file = new TestScriptFile("[RequiresPaletteShellMaximum('2.0.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("2.0.0", manifest!.MaxVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMaximum_WhenOmitted_StaysNull()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Null(manifest!.MaxVersion);
+    }
+
+    [Fact]
     public void ScriptEnv_MultipleAttributes_AllCaptured()
     {
         using var file = new TestScriptFile("""

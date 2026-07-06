@@ -65,7 +65,11 @@ Defined in `PaletteScriptAttributes.psm1`. Only these are recognized; anything e
 |-----------|---------|
 | `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` (PowerShell 7, default) or `'powershell'` (Windows PowerShell 5.1) |
 | `[ScriptCwd('{ScriptDir}')]` | Working directory (supports path tokens, below) |
-| `[ScriptGroup('Category')]` | Group name, shown as a tag and used for grouping |
+| `[ScriptGroup('Category')]` | Group name used by tooling such as the Script Manager catalog browser |
+| `[ScriptTags('foo,bar,baz')]` | Comma-delimited free-form tags used by tooling such as the Script Manager catalog browser |
+| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) — lets tools detect when a newer copy is available |
+| `[RequiresPaletteShellMinimum('1.2.0')]` | Minimum PaletteShell app version required. If the installed app is older, the row shows "Requires an update" instead of running the script. Defaults to `0.0.6` (the last release before this attribute existed) when omitted |
+| `[RequiresPaletteShellMaximum('2.0.0')]` | Maximum PaletteShell app version this script still works on. If the installed app is newer, the row shows "Requires an update" instead of running the script. Optional — use only if your script depends on behavior later removed or changed |
 | `[ScriptIcon('🚀')]` | Emoji or glyph shown on the row |
 | `[ScriptOutput('None')]` | How stdout is handled (see [Output modes](#output-modes)) |
 | `[ScriptTimeout(30000)]` | Timeout in **milliseconds**; also forces wait-and-capture |
@@ -94,6 +98,7 @@ Set with `[ScriptOutput('<mode>')]`. Default is `None`.
 | `Result` | Wait, show stdout as a single copyable result (Enter copies; a **Run again** command regenerates). Print just the value; good for generators (GUID, password, token). |
 | `File` | Write stdout to a temp file and open it in the user's editor. Add an extension hint after a colon: `File:csv`, `File:json`, etc. Best for large/structured output. |
 | `List` | Parse stdout into a searchable, pickable list — turns the script into a search/pick provider (see below). |
+| `Open` | Open the first non-empty stdout line as a URL, file, or folder path. |
 
 Anything other than `None` (or any `[ScriptTimeout]`) makes PaletteShell **wait** for the process,
 up to the timeout (30s default) before killing it. So: emit results on **stdout** (`Write-Host` /
@@ -209,6 +214,18 @@ param([string]$Query)
 ) | ConvertTo-Json -AsArray -Compress
 ```
 
+## Open output
+
+`[ScriptOutput('Open')]` runs the script and opens the first non-empty stdout line as a URL,
+file, or folder path. Emit only the target on stdout.
+
+```powershell
+[ScriptOutput('Open')]
+param()
+
+[System.IO.Path]::GetTempPath()
+```
+
 ## Helper functions (from the module)
 
 Because line 1 imports `PaletteScriptAttributes.psm1`, these are available:
@@ -233,6 +250,6 @@ transform, write back with `Set-ClipboardText`, and `Write-Host` a short status 
 - [ ] Saved as UTF-8; icon is a single emoji/glyph.
 - [ ] Exits non-zero on failure so the palette reports it.
 
-See the bundled sample scripts (`Text-Transform.ps1`, `Git-Branches.ps1`, `System-Report.ps1`,
-`Clear-TempFiles.ps1`, …) for working examples of each pattern, and the community library at
+See the bundled sample scripts (`Text-Transform.ps1`, `Git-Branches.ps1`, `Open-TempFolder.ps1`,
+`System-Report.ps1`, `Clear-TempFiles.ps1`, …) for working examples of each pattern, and the community library at
 <https://github.com/paletteshell/PaletteShellScripts>.
