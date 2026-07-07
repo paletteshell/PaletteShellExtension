@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text.Json.Nodes;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 
 namespace PaletteShellExtension.Classes;
@@ -53,8 +55,33 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
     /// <summary>The configured default host: <c>"auto"</c>, <c>"pwsh"</c>, or <c>"powershell"</c>.</summary>
     public string DefaultHost => _defaultHost.Value ?? HostAuto;
 
-    public int DefaultTimeoutMs =>
-        int.TryParse(_defaultTimeoutMs.Value, out var ms) && ms > 0 ? ms : FallbackTimeoutMs;
+    /// <summary>The user-configured default timeout, clamped to the same bounds a
+    /// script-declared <c>[ScriptTimeout(...)]</c> gets, so a typo'd setting (an extra
+    /// digit, say) can't turn every run into a multi-minute blocked COM call.</summary>
+    public int DefaultTimeoutMs
+    {
+        get
+        {
+            if (!int.TryParse(_defaultTimeoutMs.Value, out var ms) || ms <= 0)
+            {
+                return FallbackTimeoutMs;
+            }
+
+            if (ms < PowerShellScriptParser.MinTimeoutMs)
+            {
+                Log.Warn($"Clamping default timeout setting ({ms}) to the {PowerShellScriptParser.MinTimeoutMs}ms minimum");
+                return PowerShellScriptParser.MinTimeoutMs;
+            }
+
+            if (ms > PowerShellScriptParser.MaxTimeoutMs)
+            {
+                Log.Warn($"Clamping default timeout setting ({ms}) to the {PowerShellScriptParser.MaxTimeoutMs}ms maximum");
+                return PowerShellScriptParser.MaxTimeoutMs;
+            }
+
+            return ms;
+        }
+    }
 
     /// <summary>The user's preferred editor command/path, or null when unset (fall back to env vars/Notepad).</summary>
     public string? PreferredEditor =>
@@ -73,17 +100,67 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
 
     private PaletteShellSettingsManager()
     {
-        var settingsDir = Utilities.BaseSettingsPath("PaletteShellExtension");
-        Directory.CreateDirectory(settingsDir);
-        FilePath = Path.Combine(settingsDir, "settings.json");
+        // Instance is a static initializer, so anything thrown here would surface as a
+        // TypeInitializationException at first touch — during COM activation — and kill
+        // the process on every launch. Settings are a convenience, not a requirement:
+        // on any failure, log and run this session with defaults instead of dying.
+        try
+        {
+            var settingsDir = Utilities.BaseSettingsPath("PaletteShellExtension");
+            Directory.CreateDirectory(settingsDir);
+            FilePath = Path.Combine(settingsDir, "settings.json");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Failed to prepare the settings folder; settings won't persist this session", ex);
+        }
 
         Settings.Add(_defaultHost);
         Settings.Add(_defaultTimeoutMs);
         Settings.Add(_preferredEditor);
         Settings.Add(_scriptsFolder);
 
-        LoadSettings();
+        try
+        {
+            QuarantineCorruptSettingsFile(FilePath);
+            LoadSettings();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Failed to load settings; continuing with defaults", ex);
+        }
 
         Settings.SettingsChanged += (_, _) => SaveSettings();
+    }
+
+    /// <summary>
+    /// If <c>settings.json</c> exists but isn't parseable JSON (torn write, disk hiccup),
+    /// renames it to <c>settings.json.bad</c> so this and every future launch start clean
+    /// with defaults, instead of tripping over the same corrupt file at each activation.
+    /// The rename (rather than delete) keeps the evidence for diagnosis.
+    /// </summary>
+    internal static void QuarantineCorruptSettingsFile(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            JsonNode.Parse(File.ReadAllText(filePath));
+        }
+        catch (Exception parseEx)
+        {
+            Log.Error($"Settings file '{filePath}' is corrupt; moving it aside and starting with defaults", parseEx);
+            try
+            {
+                File.Move(filePath, filePath + ".bad", overwrite: true);
+            }
+            catch (Exception moveEx)
+            {
+                Log.Warn($"Couldn't quarantine corrupt settings file: {moveEx.Message}");
+            }
+        }
     }
 }

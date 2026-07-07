@@ -325,11 +325,25 @@ internal static class ScriptRunner
     {
         Process? proc = null;
 
+        var scriptName = Path.GetFileNameWithoutExtension(scriptPath);
+
+        // This wait happens on a thread the host is synchronously blocked on (a COM call),
+        // so it must always be bounded: a null or oversized timeout gets the same hard
+        // ceiling a script-declared [ScriptTimeout(...)] does. No code path waits forever.
+        var effectiveTimeoutMs = Math.Min(
+            timeoutMs ?? PowerShellScriptParser.MaxTimeoutMs,
+            PowerShellScriptParser.MaxTimeoutMs);
+
+        // One line at start and one at finish, so a hang or crash report can be lined up
+        // against the log: a start line with no matching finish points at the culprit.
+        Log.Info($"Running '{scriptName}' (host {host}, timeout {effectiveTimeoutMs}ms)");
+        var stopwatch = Stopwatch.StartNew();
+
         // Show a "Running <script>…" spinner in the status bar for the duration of the
         // wait. Folded in here (rather than per-script) so every output mode benefits —
         // a slow script no longer looks frozen until its toast/page appears.
         var progress = reportProgress
-            ? ScriptStatus.ShowRunning(Path.GetFileNameWithoutExtension(scriptPath))
+            ? ScriptStatus.ShowRunning(scriptName)
             : null;
 
         try
@@ -347,6 +361,7 @@ internal static class ScriptRunner
 
             if (proc == null)
             {
+                Log.Warn($"Script '{scriptName}' failed to start after {stopwatch.ElapsedMilliseconds}ms (Process.Start returned null)");
                 return null;
             }
 
@@ -365,11 +380,10 @@ internal static class ScriptRunner
                 stderrTask = proc.StandardError.ReadToEndAsync();
             }
 
-            // Wait for exit, enforcing the timeout if one was given.
-            if (timeoutMs.HasValue && !proc.WaitForExit(timeoutMs.Value))
+            if (!proc.WaitForExit(effectiveTimeoutMs))
             {
                 result.TimedOut = true;
-                Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed");
+                Log.Warn($"Script '{scriptName}' timed out after {stopwatch.ElapsedMilliseconds}ms (limit {effectiveTimeoutMs}ms) and was killed");
                 try { proc.Kill(entireProcessTree: true); }
                 catch (Exception)
                 {
@@ -382,11 +396,6 @@ internal static class ScriptRunner
                 return result;
             }
 
-            if (!timeoutMs.HasValue)
-            {
-                proc.WaitForExit();
-            }
-
             // The process has exited, so the streams are closed and the reads finish
             // promptly; this also ensures async I/O completion before we read ExitCode.
             result.StandardOutput = AwaitRead(stdoutTask);
@@ -394,13 +403,17 @@ internal static class ScriptRunner
             result.ExitCode = proc.ExitCode;
             if (result.ExitCode != 0)
             {
-                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}");
+                Log.Warn($"Script '{scriptName}' exited with code {result.ExitCode} after {stopwatch.ElapsedMilliseconds}ms");
+            }
+            else
+            {
+                Log.Info($"Script '{scriptName}' completed in {stopwatch.ElapsedMilliseconds}ms");
             }
             return result;
         }
         catch (Exception ex)
         {
-            Log.Error($"Failed to run script '{scriptPath}'", ex);
+            Log.Error($"Failed to run script '{scriptPath}' after {stopwatch.ElapsedMilliseconds}ms", ex);
             return null;
         }
         finally

@@ -33,29 +33,49 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
     private sealed record CachedManifestEntry(long Length, DateTime LastWriteTimeUtc, ScriptManifest? Manifest);
 
+    // Set when the configured scripts folder couldn't be created or scanned (unplugged
+    // USB drive, offline share, changed drive letter). GetItems() surfaces it instead of
+    // the failure taking down COM activation. The persisted setting is deliberately left
+    // alone — the folder may come back, and the user can repoint via setup meanwhile.
+    private string? _folderError;
+
     public PaletteShellExtensionPage()
     {
         Icon = IconHelpers.FromRelativePath("Assets\\StoreLogo.png");
         Title = $"PaletteShell v{AppVersion.Current}";
         Name = "PaletteShell";
 
-        var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
-        if (configuredFolder is null && Directory.Exists(SuggestedDefaultFolder))
+        string? configuredFolder = null;
+        try
         {
-            // Upgrading from a version that predates this setting: the well-known default
-            // folder already exists (with the user's scripts and pins in it), so adopt it
-            // silently instead of prompting someone who's already set up.
-            PaletteShellSettingsManager.Instance.ScriptsFolder = SuggestedDefaultFolder;
-            configuredFolder = SuggestedDefaultFolder;
-        }
+            configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
+            if (configuredFolder is null && Directory.Exists(SuggestedDefaultFolder))
+            {
+                // Upgrading from a version that predates this setting: the well-known default
+                // folder already exists (with the user's scripts and pins in it), so adopt it
+                // silently instead of prompting someone who's already set up.
+                PaletteShellSettingsManager.Instance.ScriptsFolder = SuggestedDefaultFolder;
+                configuredFolder = SuggestedDefaultFolder;
+            }
 
-        if (configuredFolder is not null)
-        {
-            InitializeFolder(configuredFolder);
+            if (configuredFolder is not null)
+            {
+                InitializeFolder(configuredFolder);
+            }
+            // Else: genuinely first run, no folder configured and no pre-existing default folder
+            // — GetItems() prompts for one instead of silently defaulting, and InitializeFolder
+            // runs once the user picks one.
         }
-        // Else: genuinely first run, no folder configured and no pre-existing default folder
-        // — GetItems() prompts for one instead of silently defaulting, and InitializeFolder
-        // runs once the user picks one.
+        catch (Exception ex)
+        {
+            // This constructor runs during COM activation; throwing here would crash the
+            // extension process on every launch until the folder problem resolved itself.
+            // Degrade to the setup state instead and say which folder failed.
+            Log.Error($"Failed to initialize scripts folder '{configuredFolder ?? "(none)"}'", ex);
+            _rootDirectory = null;
+            _pins = null;
+            _folderError = configuredFolder;
+        }
     }
 
     // Points the page at the given folder, creating it and copying in the sample scripts and
@@ -75,10 +95,25 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         _ = Task.Run(() => CopyPowerShellModule(folder));
     }
 
-    // Called by the setup form once the user chooses a folder for the first time.
+    // Called by the setup form once the user chooses a folder for the first time. The form
+    // already validated it can create the folder, but the scan can still fail (e.g. access
+    // denied on an existing folder) — degrade like the constructor does rather than letting
+    // the exception travel back through the form's COM call.
     private void HandleFolderConfigured(string folder)
     {
-        InitializeFolder(folder);
+        try
+        {
+            _folderError = null;
+            InitializeFolder(folder);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to initialize scripts folder '{folder}'", ex);
+            _rootDirectory = null;
+            _pins = null;
+            _folderError = folder;
+        }
+
         RaiseItemsChanged();
     }
 
@@ -94,28 +129,41 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             return 0;
         }
 
-        // The folder may have been repointed via the settings page since this page was
-        // built (or since the last reload) — re-derive it here so "Reload scripts" is the
-        // single, explicit action that picks up a relocation, consistent with how it's
-        // already the single action that picks up new/edited scripts.
-        var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
-        if (configuredFolder is not null && !string.Equals(configuredFolder, _rootDirectory, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            _rootDirectory = configuredFolder;
-            _manifestCache.Clear();
-            Directory.CreateDirectory(configuredFolder);
-            _pins = new PinnedScripts(configuredFolder);
-            CopySampleScripts(configuredFolder);
-            _ = Task.Run(() => CopyPowerShellModule(configuredFolder));
+            // The folder may have been repointed via the settings page since this page was
+            // built (or since the last reload) — re-derive it here so "Reload scripts" is the
+            // single, explicit action that picks up a relocation, consistent with how it's
+            // already the single action that picks up new/edited scripts.
+            var configuredFolder = PaletteShellSettingsManager.Instance.ScriptsFolder;
+            if (configuredFolder is not null && !string.Equals(configuredFolder, _rootDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                _rootDirectory = configuredFolder;
+                _manifestCache.Clear();
+                Directory.CreateDirectory(configuredFolder);
+                _pins = new PinnedScripts(configuredFolder);
+                CopySampleScripts(configuredFolder);
+                _ = Task.Run(() => CopyPowerShellModule(configuredFolder));
+            }
+
+            var rootDirectory = _rootDirectory;
+
+            // Enumerate as FileInfo rather than paths: the directory listing already carries each
+            // file's size and write time, so the manifest-cache check in GetItems can reuse them
+            // instead of paying a second stat per script (noticeable on synced/network folders).
+            _files = [.. new DirectoryInfo(rootDirectory).EnumerateFiles("*.ps1", SearchOption.TopDirectoryOnly)];
+            PruneManifestCache(_files.Select(f => f.FullName));
+            _folderError = null;
         }
-
-        var rootDirectory = _rootDirectory;
-
-        // Enumerate as FileInfo rather than paths: the directory listing already carries each
-        // file's size and write time, so the manifest-cache check in GetItems can reuse them
-        // instead of paying a second stat per script (noticeable on synced/network folders).
-        _files = [.. new DirectoryInfo(rootDirectory).EnumerateFiles("*.ps1", SearchOption.TopDirectoryOnly)];
-        PruneManifestCache(_files.Select(f => f.FullName));
+        catch (Exception ex)
+        {
+            // The folder went away between launches or mid-session (drive unplugged, share
+            // offline). Keep the page alive with an empty scan and a visible error item
+            // rather than throwing back through the host's COM call.
+            Log.Error($"Failed to scan scripts folder '{_rootDirectory}'", ex);
+            _files = [];
+            _folderError = _rootDirectory;
+        }
 
         // Use the page's change notification so CmdPal asks for items again.
         RaiseItemsChanged();
@@ -269,14 +317,17 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     {
         if (_rootDirectory is not { } rootDirectory || _pins is not { } pins)
         {
-            // First run - no folder configured yet. Prompt for one instead of silently
-            // defaulting; everything else (samples, module, script scan) waits for it.
+            // First run (no folder configured yet) or the configured folder couldn't be
+            // accessed at startup. Prompt for one instead of silently defaulting; everything
+            // else (samples, module, script scan) waits for it.
             return
             [
                 new ListItem(new ScriptsFolderSetupPage(SuggestedDefaultFolder, HandleFolderConfigured))
                 {
                     Title = "Choose scripts folder",
-                    Subtitle = "Pick where PaletteShell should look for your .ps1 scripts",
+                    Subtitle = _folderError is null
+                        ? "Pick where PaletteShell should look for your .ps1 scripts"
+                        : $"⚠ Couldn't access '{_folderError}' — reconnect it or pick another folder",
                 },
             ];
         }
@@ -286,7 +337,20 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             return _cachedItems;
         }
 
-        List<IListItem> items = [
+        List<IListItem> items = [];
+
+        // A configured folder that failed its last scan gets a visible banner (with a retry
+        // via the reload command) instead of an unexplained empty list.
+        if (_folderError is not null)
+        {
+            items.Add(new ListItem(new ReloadPageCommand(this))
+            {
+                Title = "⚠ Couldn't read the scripts folder",
+                Subtitle = $"'{_folderError}' — reconnect it, then press Enter to retry",
+            });
+        }
+
+        items.AddRange([
             new ListItem(new OpenFolderCommand(rootDirectory)) { Title = "Open scripts folder" },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
             new ListItem(new NewScriptWizardPage(rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
@@ -298,7 +362,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     new CommandContextItem(new OpenLinkCommand("View repository on GitHub", "https://github.com/paletteshell/PaletteShellScripts", "")),
                 ],
             },
-        ];
+        ]);
 
         // Script items are sorted below: pinned scripts first, then alphabetically by their
         // displayed Title (not by filename, since the manifest Title often differs from it).
@@ -424,21 +488,39 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 // dropping the script silently, surface it with an error hint so the user can
                 // find it, open it to fix, or remove it — instead of wondering where it went.
                 Log.Warn($"Failed to build list item for '{path}': {ex.Message}");
-                var pinned = pins.IsPinned(path);
-                var errorTitle = Path.GetFileNameWithoutExtension(path);
-                scriptResults[i] = (pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
+                try
                 {
-                    Title = errorTitle,
-                    Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
-                    Icon = new IconInfo(""), // Warning
-                    MoreCommands = BuildContextCommands(path, pins)
-                });
+                    var pinned = pins.IsPinned(path);
+                    var errorTitle = Path.GetFileNameWithoutExtension(path);
+                    scriptResults[i] = (pinned, errorTitle, new ListItem(new OpenInEditorCommand(path))
+                    {
+                        Title = errorTitle,
+                        Subtitle = $"⚠ Couldn't load this script — open to inspect ({Path.GetFileName(path)})",
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                }
+                catch (Exception inner)
+                {
+                    // Even the rich error entry failed (e.g. the pin store or icon machinery is
+                    // what threw in the first place). Fill the slot with the barest possible item
+                    // so it is never left null — the sort below dereferences every slot.
+                    Log.Warn($"Failed to build fallback item for '{path}': {inner.Message}");
+                    var bareTitle = Path.GetFileNameWithoutExtension(path);
+                    scriptResults[i] = (false, bareTitle, new ListItem(new OpenInEditorCommand(path))
+                    {
+                        Title = bareTitle,
+                    });
+                }
             }
         });
 
         // Keep the system commands at the very top; then pinned scripts, then the rest —
-        // each group alphabetical by title.
+        // each group alphabetical by title. Every slot is filled by the loop above (even its
+        // catch has a fallback), but skip any null defensively — a missing row beats throwing
+        // the whole list away through the COM boundary.
         items.AddRange(scriptResults
+            .Where(r => r.HasValue)
             .Select(r => r!.Value)
             .OrderByDescending(i => i.Pinned)
             .ThenBy(i => i.Title, StringComparer.CurrentCultureIgnoreCase)

@@ -168,8 +168,10 @@ internal static partial class PowerShellScriptParser
         return expanded;
     }
 
-    private const int MinTimeoutMs = 1000;
-    private const int MaxTimeoutMs = 600_000; // 10 minutes
+    // Shared with PaletteShellSettingsManager so the user-configured default timeout is
+    // held to the same bounds as a script-declared [ScriptTimeout(...)].
+    internal const int MinTimeoutMs = 1000;
+    internal const int MaxTimeoutMs = 600_000; // 10 minutes
 
     /// <summary>
     /// Rejects a timeout too small to be meaningful (and negative values, which would throw
@@ -329,6 +331,10 @@ internal static partial class PowerShellScriptParser
                         .Select(t => t.Trim())
                         .Where(t => t.Length > 0)
                         .ToList();
+                    break;
+                case "ScriptVersion":
+                    // Deprecated script-authored version metadata is ignored for backward
+                    // compatibility with existing scripts that still declare it.
                     break;
                 case "RequiresPaletteShellMinimum" when values.Count >= 1:
                     manifest.MinVersion = values[0];

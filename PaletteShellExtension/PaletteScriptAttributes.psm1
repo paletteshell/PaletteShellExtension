@@ -60,6 +60,13 @@ class ScriptTagsAttribute : Attribute {
     ScriptTagsAttribute([string]$tags) { $this.Tags = $tags }
 }
 
+# Deprecated no-op kept so existing scripts that still declare [ScriptVersion(...)] continue
+# to run. PaletteShell ignores this metadata.
+class ScriptVersionAttribute : Attribute {
+    [string]$Version
+    ScriptVersionAttribute([string]$version) { $this.Version = $version }
+}
+
 # Minimum PaletteShell app version (SemVer) required to run this script. PaletteShell hides
 # the script (with an explanatory row) instead of running it when the installed app is older.
 class RequiresPaletteShellMinimumAttribute : Attribute {

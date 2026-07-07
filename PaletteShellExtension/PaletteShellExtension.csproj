@@ -25,7 +25,13 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
-
+  <ItemGroup>
+    <!-- TextCopy.dll is copied into the user's scripts folder at runtime, where
+         PaletteScriptAttributes.psm1 loads it via Assembly.LoadFrom for clipboard access —
+         an external consumer the trimmer can't see. Root the whole assembly so the shipped
+         DLL keeps every member PowerShell might call, not just what the extension references. -->
+    <TrimmerRootAssembly Include="TextCopy" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
@@ -35,14 +41,6 @@
     <InternalsVisibleTo Include="PaletteShellExtension.Tests" />
   </ItemGroup>
 
-   <Target Name="EnsureTextCopyInOutput" AfterTargets="Build">
-    <ItemGroup>
-      <TextCopySource Include="$(NuGetPackageRoot)textcopy\**\lib\netstandard2.0\TextCopy.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="@(TextCopySource)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(TextCopySource)' != ''" />
-    <Message Importance="High" Text="Copied TextCopy.dll to output: @(TextCopySource)" Condition="'@(TextCopySource)' != ''" />
-  </Target>
-  
   <Target Name="PrepareAssets" BeforeTargets="BeforeBuild">
     <!-- Copy scale-specific assets to base filenames expected by store validations -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.scale-100.png" DestinationFiles="$(MSBuildProjectDirectory)\Assets\Square150x150Logo.png" SkipUnchangedFiles="true" />
