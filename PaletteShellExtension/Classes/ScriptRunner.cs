@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Classes;
 
-internal static class ScriptRunner
+internal static partial class ScriptRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -17,6 +18,10 @@ internal static class ScriptRunner
         public string? StandardOutput { get; set; }
         public string? StandardError { get; set; }
         public bool TimedOut { get; set; }
+
+        /// <summary>Wall-clock run time, when the runner measured it. Null for results that
+        /// predate the wait (e.g. a failed start), so reports can omit the line.</summary>
+        public long? DurationMs { get; set; }
     }
 
     /// <summary>
@@ -39,7 +44,22 @@ internal static class ScriptRunner
         return $"Script failed (exit {result.ExitCode}): {error}";
     }
 
-    /// <summary>Waits briefly for a stream read to finish, returning null on failure or timeout.</summary>
+    // ANSI escape sequences: CSI (colors/cursor), OSC (titles/hyperlinks), and two-character
+    // escapes. PowerShell 7 colors its error output with these even when stderr is redirected,
+    // and native tools a script calls (git, npm, …) do the same.
+    [GeneratedRegex(@"\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)?|[@-_])")]
+    private static partial Regex AnsiEscapes();
+
+    /// <summary>
+    /// Removes ANSI escape sequences from captured output. Nothing downstream can render
+    /// them — toasts, dialogs, pages, and the log are all plain text — so left in they show
+    /// up as literal "[31;1m" noise.
+    /// </summary>
+    internal static string? StripAnsi(string? text)
+        => string.IsNullOrEmpty(text) || !text.Contains('\x1B') ? text : AnsiEscapes().Replace(text, "");
+
+    /// <summary>Waits briefly for a stream read to finish, returning null on failure or
+    /// timeout. Captured output is ANSI-stripped here — the single funnel for both streams.</summary>
     private static string? AwaitRead(Task<string>? task)
     {
         if (task is null)
@@ -49,7 +69,7 @@ internal static class ScriptRunner
 
         try
         {
-            return task.Wait(2000) ? task.Result : null;
+            return task.Wait(2000) ? StripAnsi(task.Result) : null;
         }
         catch (Exception)
         {
@@ -68,7 +88,7 @@ internal static class ScriptRunner
 
         try
         {
-            return await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            return StripAnsi(await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false));
         }
         catch (Exception)
         {
@@ -228,6 +248,8 @@ internal static class ScriptRunner
     {
         Process? proc = null;
 
+        var stopwatch = Stopwatch.StartNew();
+
         var progress = reportProgress
             ? ScriptStatus.ShowRunning(Path.GetFileNameWithoutExtension(scriptPath))
             : null;
@@ -272,16 +294,18 @@ internal static class ScriptRunner
                 catch (TimeoutException)
                 {
                     result.TimedOut = true;
-                    Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed");
+                    result.DurationMs = stopwatch.ElapsedMilliseconds;
                     try { proc.Kill(entireProcessTree: true); }
                     catch (Exception)
                     {
                         // Ignore failures killing the process tree.
                     }
                     // Killing closes the pipes, so the reads complete with whatever was
-                    // buffered; capture that partial output before returning.
+                    // buffered; capture that partial output before returning. The Warn comes
+                    // after the drain so it can include the script's stderr.
                     result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
                     result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
+                    Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed{ScriptFailureReport.StderrForLog(result.StandardError)}");
                     return result;
                 }
             }
@@ -295,9 +319,10 @@ internal static class ScriptRunner
             result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
             result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
             result.ExitCode = proc.ExitCode;
+            result.DurationMs = stopwatch.ElapsedMilliseconds;
             if (result.ExitCode != 0)
             {
-                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}");
+                Log.Warn($"Script '{scriptPath}' exited with code {result.ExitCode}{ScriptFailureReport.StderrForLog(result.StandardError)}");
             }
             return result;
         }
@@ -383,16 +408,18 @@ internal static class ScriptRunner
             if (!proc.WaitForExit(effectiveTimeoutMs))
             {
                 result.TimedOut = true;
-                Log.Warn($"Script '{scriptName}' timed out after {stopwatch.ElapsedMilliseconds}ms (limit {effectiveTimeoutMs}ms) and was killed");
+                result.DurationMs = stopwatch.ElapsedMilliseconds;
                 try { proc.Kill(entireProcessTree: true); }
                 catch (Exception)
                 {
                     // Ignore failures killing the process tree.
                 }
                 // Killing closes the pipes, so the reads complete with whatever was
-                // buffered; capture that partial output before returning.
+                // buffered; capture that partial output before returning. The Warn comes
+                // after the drain so it can include the script's stderr.
                 result.StandardOutput = AwaitRead(stdoutTask);
                 result.StandardError = AwaitRead(stderrTask);
+                Log.Warn($"Script '{scriptName}' timed out after {stopwatch.ElapsedMilliseconds}ms (limit {effectiveTimeoutMs}ms) and was killed{ScriptFailureReport.StderrForLog(result.StandardError)}");
                 return result;
             }
 
@@ -401,9 +428,10 @@ internal static class ScriptRunner
             result.StandardOutput = AwaitRead(stdoutTask);
             result.StandardError = AwaitRead(stderrTask);
             result.ExitCode = proc.ExitCode;
+            result.DurationMs = stopwatch.ElapsedMilliseconds;
             if (result.ExitCode != 0)
             {
-                Log.Warn($"Script '{scriptName}' exited with code {result.ExitCode} after {stopwatch.ElapsedMilliseconds}ms");
+                Log.Warn($"Script '{scriptName}' exited with code {result.ExitCode} after {stopwatch.ElapsedMilliseconds}ms{ScriptFailureReport.StderrForLog(result.StandardError)}");
             }
             else
             {

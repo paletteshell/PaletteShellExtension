@@ -171,7 +171,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
                 return; // A newer query arrived while this ran; discard this one.
             }
 
-            _items = BuildItems(result);
+            _items = BuildItems(result, args);
         }
         catch (Exception ex)
         {
@@ -215,16 +215,12 @@ internal sealed partial class ScriptListPage : DynamicListPage
             || (i.Subtitle?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))];
     }
 
-    private static IListItem[] BuildItems(ScriptRunner.ScriptResult? result)
+    private IListItem[] BuildItems(ScriptRunner.ScriptResult? result, string args)
     {
-        if (result is null)
-            return [Message("Failed to start script.")];
-
-        if (result.TimedOut)
-            return [Message("Script timed out.")];
-
-        if (result.ExitCode != 0)
-            return [Message(ScriptRunner.DescribeFailure(result))];
+        // Failures get an actionable row (Enter opens the full failure report) instead of
+        // an inert message, so the user can see the whole error rather than a summary.
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return [ScriptFailurePresenter.ToListItem(_scriptPath, _host, args, result)];
 
         var output = result.StandardOutput;
         if (string.IsNullOrWhiteSpace(output))

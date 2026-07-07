@@ -112,14 +112,10 @@ internal sealed partial class ScriptResultPage : ListPage
 
     private IListItem[] BuildItems(ScriptRunner.ScriptResult? result)
     {
-        if (result is null)
-            return [Message("Failed to start script.")];
-
-        if (result.TimedOut)
-            return [Message("Script timed out.")];
-
-        if (result.ExitCode != 0)
-            return [Message(ScriptRunner.DescribeFailure(result))];
+        // Failures get an actionable row (Enter opens the full failure report) instead of
+        // an inert message, so the user can see the whole error rather than a summary.
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return [ScriptFailurePresenter.ToListItem(_scriptPath, _host, "", result)];
 
         var value = result.StandardOutput?.Trim();
         if (string.IsNullOrEmpty(value))

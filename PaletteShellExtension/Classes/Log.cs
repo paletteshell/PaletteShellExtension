@@ -13,7 +13,10 @@ namespace PaletteShellExtension.Classes;
 internal static class Log
 {
     private static readonly object WriteLock = new();
-    private static readonly string LogDirectory;
+
+    /// <summary>Where the daily log files live. Exposed so the palette can offer an
+    /// "Open log folder" command — otherwise the user has no way to find these files.</summary>
+    internal static string LogDirectory { get; }
 
     // A single append-mode writer held for the process lifetime (re-opened when the day
     // rolls over), so a burst of warnings — e.g. a reload of a folder with several

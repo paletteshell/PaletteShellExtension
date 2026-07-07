@@ -352,6 +352,11 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         items.AddRange([
             new ListItem(new OpenFolderCommand(rootDirectory)) { Title = "Open scripts folder" },
+            new ListItem(new OpenFolderCommand(Log.LogDirectory, "Open log folder"))
+            {
+                Title = "Open log folder",
+                Subtitle = "Diagnostic logs for script runs and failures",
+            },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
             new ListItem(new NewScriptWizardPage(rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
             new ListItem(new LaunchCommunityStoreCommand())

@@ -51,6 +51,8 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
 
         var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : (int?)null;
 
+        var host = _manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
+
         // "None" never surfaces output, so when there's also no timeout we can run
         // fire-and-forget without waiting for/capturing stdout. Any other mode
         // (Toast/Clipboard) needs the output, so we must wait even without a timeout.
@@ -60,7 +62,7 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
             ScriptRunner.RunScript(
                 scriptPath: path,
                 args: "",
-                host: _manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
+                host: host,
                 cwd: cwd,
                 env: expandedEnv);
             return CommandResult.ShowToast("Script completed");
@@ -71,21 +73,17 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         var result = ScriptRunner.RunScriptAndWait(
             scriptPath: path,
             args: "",
-            host: _manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
+            host: host,
             cwd: cwd,
             env: expandedEnv,
             requiresAdmin: wantsAdmin,
             timeoutMs: timeout ?? PaletteShellSettingsManager.Instance.DefaultTimeoutMs);
 
-        if (result == null)
-            return CommandResult.ShowToast("Error: Process.Start returned null");
-
-        if (result.TimedOut)
-            return CommandResult.ShowToast("Script timed out");
-
-        // If script failed, return gracefully without further processing
-        if (result.ExitCode != 0)
-            return CommandResult.ShowToast(ScriptRunner.DescribeFailure(result));
+        // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
+        // "View details" opens the full failure report — a toast is too small and too
+        // short-lived to explain what went wrong.
+        if (result == null || result.TimedOut || result.ExitCode != 0)
+            return ScriptFailurePresenter.ToCommandResult(path, host, "", result);
 
         // Elevated scripts can't have their output captured, so suppress output handling.
         var output = !wantsAdmin ? result.StandardOutput : null;

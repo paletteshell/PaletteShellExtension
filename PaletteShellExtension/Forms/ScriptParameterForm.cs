@@ -203,14 +203,11 @@ internal sealed class ScriptParameterForm : FormContent
                 requiresAdmin: false,
                 timeoutMs: timeout);
 
-            if (result == null)
-                return CommandResult.ShowToast("Error: Failed to start script");
-
-            if (result.TimedOut)
-                return CommandResult.ShowToast("Script timed out");
-
-            if (result.ExitCode != 0)
-                return CommandResult.ShowToast(ScriptRunner.DescribeFailure(result));
+            // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
+            // "View details" opens the full failure report — a toast is too small and too
+            // short-lived to explain what went wrong.
+            if (result == null || result.TimedOut || result.ExitCode != 0)
+                return ScriptFailurePresenter.ToCommandResult(_scriptPath, _host, argsLine, result);
 
             // Markdown output - render the result in place instead of a toast.
             var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);

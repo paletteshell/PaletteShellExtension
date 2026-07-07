@@ -18,20 +18,11 @@
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
     <AppxPackageVersion>0.0.7.0</AppxPackageVersion>
 
-    <!-- Trim the self-contained .NET runtime in Release so the packaged extension stays small.
-         Safe now that the reflection-heavy PowerShell SDK is gone; the analyzer keeps future
-         trim hazards visible at build time. -->
-    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
-    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <!-- Do not trim the packaged extension. The WinRT projection dependencies and the
+         bundled TextCopy assembly use dynamic/reflection-heavy paths that are not fully
+         trim-annotated, and TextCopy must remain intact for PowerShell script clipboard helpers. -->
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
-
-  <ItemGroup>
-    <!-- TextCopy.dll is copied into the user's scripts folder at runtime, where
-         PaletteScriptAttributes.psm1 loads it via Assembly.LoadFrom for clipboard access —
-         an external consumer the trimmer can't see. Root the whole assembly so the shipped
-         DLL keeps every member PowerShell might call, not just what the extension references. -->
-    <TrimmerRootAssembly Include="TextCopy" />
-  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
