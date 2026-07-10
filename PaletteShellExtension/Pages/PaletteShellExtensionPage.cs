@@ -31,7 +31,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     private IListItem[]? _cachedItems;
     private readonly ConcurrentDictionary<string, CachedManifestEntry> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
 
-    private sealed record CachedManifestEntry(long Length, DateTime LastWriteTimeUtc, ScriptManifest? Manifest);
+    private sealed record CachedManifestEntry(long Length, DateTime LastWriteTimeUtc, ScriptParseResult Result);
 
     // Set when the configured scripts folder couldn't be created or scanned (unplugged
     // USB drive, offline share, changed drive letter). GetItems() surfaces it instead of
@@ -383,7 +383,38 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             var path = file.FullName;
             try
             {
-                var manifest = GetCachedManifest(file);
+                var parseResult = GetCachedManifest(file);
+
+                // Metadata was malformed enough that the parser failed closed. Show a disabled
+                // repair row that opens the script for editing instead of running a partially
+                // understood script (which could launch fire-and-forget and report false success).
+                if (parseResult.HasErrors)
+                {
+                    var repairPinned = pins.IsPinned(path);
+                    var repairTitle = Path.GetFileNameWithoutExtension(path);
+                    // The subtitle truncates the parse error; Enter shows the full reason in a
+                    // dialog whose primary action opens the script to fix it.
+                    scriptResults[i] = (repairPinned, repairTitle, new ListItem(new CallbackCommand("View error", () =>
+                        WarningDialog.Show(
+                            $"Couldn't load {Path.GetFileName(path)}",
+                            parseResult.FirstError ?? "The script's metadata couldn't be parsed.",
+                            "Open to fix",
+                            () =>
+                            {
+                                EditorLauncher.Open(path);
+                                return CommandResult.Dismiss();
+                            }))
+                    )
+                    {
+                        Title = repairTitle,
+                        Subtitle = $"⚠ Couldn't load this script — {parseResult.FirstError} Open to fix ({Path.GetFileName(path)})",
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                    return;
+                }
+
+                var manifest = parseResult.Manifest;
                 var title = manifest?.Title ?? Path.GetFileNameWithoutExtension(path);
                 var subtitle = manifest?.Description ?? path;
 
@@ -400,6 +431,19 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     {
                         Title = title,
                         Subtitle = incompatibleSubtitle,
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                    return;
+                }
+
+                if (compat.Kind == ScriptCompatibilityKind.UnknownHost)
+                {
+                    var unknownHostPinned = pins.IsPinned(path);
+                    scriptResults[i] = (unknownHostPinned, title, new ListItem(new UnknownHostCommand(compat.BadHost!))
+                    {
+                        Title = title,
+                        Subtitle = $"⚠ Unknown script host '{compat.BadHost}' — use auto, pwsh, or powershell",
                         Icon = new IconInfo(""), // Warning
                         MoreCommands = BuildContextCommands(path, pins)
                     });
@@ -456,9 +500,18 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     // a calculator shows an answer.
                     command = new ScriptResultPage(path, manifest, plan!);
                 }
+                else if (plan is not null && (plan.DeclaredTimeoutMs is not null || plan.SurfacesOutput))
+                {
+                    // No parameters, but a waited mode (Toast/Clipboard/Open/File, or None with a
+                    // declared timeout): run on the async ScriptRunPage so a slow script doesn't
+                    // freeze the host on its blocking COM call. The page shows progress, runs the
+                    // script off-thread, then dispatches the clipboard/toast/file/open behavior.
+                    command = new ScriptRunPage(path, manifest!, plan);
+                }
                 else
                 {
-                    // No parameters - run script directly
+                    // No parameters, nothing to wait for or surface (None output with no declared
+                    // timeout, or no manifest at all) - launch fire-and-forget.
                     command = new RunScriptCommand(path, manifest);
                 }
 
@@ -531,7 +584,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
     // Takes the FileInfo from RefreshFiles' enumeration so the size/write-time cache check
     // doesn't re-stat the file. The snapshot being from scan time is fine: picking up
     // between-reload edits was never promised — "Reload scripts" is the refresh point.
-    private ScriptManifest? GetCachedManifest(FileInfo info)
+    private ScriptParseResult GetCachedManifest(FileInfo info)
     {
         var path = info.FullName;
         try
@@ -540,18 +593,18 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 && cached.Length == info.Length
                 && cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
             {
-                return cached.Manifest;
+                return cached.Result;
             }
 
-            var manifest = PowerShellScriptParser.TryParseManifest(path);
-            _manifestCache[path] = new CachedManifestEntry(info.Length, info.LastWriteTimeUtc, manifest);
-            return manifest;
+            var result = PowerShellScriptParser.TryParse(path);
+            _manifestCache[path] = new CachedManifestEntry(info.Length, info.LastWriteTimeUtc, result);
+            return result;
         }
         catch (Exception ex)
         {
             Log.Warn($"Failed to stat manifest for '{path}': {ex.Message}");
             _manifestCache.TryRemove(path, out _);
-            return PowerShellScriptParser.TryParseManifest(path);
+            return PowerShellScriptParser.TryParse(path);
         }
     }
 

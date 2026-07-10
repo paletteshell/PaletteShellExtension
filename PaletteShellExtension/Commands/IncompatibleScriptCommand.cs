@@ -13,8 +13,9 @@ internal sealed partial class IncompatibleScriptCommand(string requiredVersion, 
     public override string Name => "Requires an update";
     public override IconInfo Icon => new(""); // Warning
 
+    // A toast truncated the message; show the full reason in a dialog the user can read.
     public override CommandResult Invoke() =>
-        CommandResult.ShowToast(tooNew
-            ? $"This script requires PaletteShell v{requiredVersion} or earlier (you have v{installedVersion})"
-            : $"This script requires PaletteShell v{requiredVersion} or later (you have v{installedVersion})");
+        WarningDialog.Show("Requires an update", tooNew
+            ? $"This script requires PaletteShell v{requiredVersion} or earlier (you have v{installedVersion})."
+            : $"This script requires PaletteShell v{requiredVersion} or later (you have v{installedVersion}).");
 }

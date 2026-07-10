@@ -97,44 +97,215 @@ internal static partial class ScriptRunner
         }
     }
 
-    private static readonly Lazy<bool> PwshAvailable = new(() => CanResolveOnPath("pwsh.exe"));
-
-    public static string ResolveShell(string? host)
+    /// <summary>
+    /// Validated interpreter selection. The raw manifest/settings token
+    /// (<c>"auto"</c>/<c>"pwsh"</c>/<c>"powershell"</c>) is parsed into one of these so each case
+    /// gets an explicit policy instead of "anything that isn't 'powershell' means pwsh-or-fallback".
+    /// </summary>
+    public enum ShellHost
     {
-        if (string.Equals(host, "powershell", StringComparison.OrdinalIgnoreCase))
-        {
-            return "powershell.exe";
-        }
-
-        // Default to PowerShell 7 (pwsh), but fall back to Windows PowerShell when it
-        // isn't installed so scripts still run on a stock machine.
-        return PwshAvailable.Value ? "pwsh.exe" : "powershell.exe";
+        /// <summary>Prefer pwsh, fall back to Windows PowerShell.</summary>
+        Auto,
+        /// <summary>Require PowerShell 7; fail if it isn't installed.</summary>
+        Pwsh,
+        /// <summary>Require Windows PowerShell (powershell.exe).</summary>
+        WindowsPowerShell,
+        /// <summary>Unrecognized token — the script is incompatible.</summary>
+        Unknown,
     }
 
-    private static bool CanResolveOnPath(string exe)
+    /// <summary>Thrown when the declared host can't be satisfied (required interpreter missing,
+    /// or an unknown host token). Callers turn this into a start-failure the user can read.</summary>
+    public sealed class ShellResolutionException : Exception
     {
-        var path = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrEmpty(path))
+        public ShellResolutionException(string message) : base(message) { }
+    }
+
+    /// <summary>Parses a host token into <see cref="ShellHost"/>. Null/blank is <see cref="ShellHost.Auto"/>
+    /// (the manifest default). Any other unrecognized value is <see cref="ShellHost.Unknown"/> — signalled,
+    /// never silently coerced to a working interpreter.</summary>
+    public static ShellHost ParseHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
         {
-            return false;
+            return ShellHost.Auto;
         }
 
-        foreach (var dir in path.Split(Path.PathSeparator))
+        return host.Trim().ToLowerInvariant() switch
         {
+            "auto" => ShellHost.Auto,
+            "pwsh" => ShellHost.Pwsh,
+            "powershell" => ShellHost.WindowsPowerShell,
+            _ => ShellHost.Unknown,
+        };
+    }
+
+    /// <summary>
+    /// Resolves the host token to a concrete interpreter path.
+    /// <list type="bullet">
+    /// <item>Auto: pwsh, else Windows PowerShell.</item>
+    /// <item>Pwsh: pwsh only — throws "PowerShell 7 is required but not installed" when missing,
+    /// rather than silently downgrading a script that declared a 7-only requirement.</item>
+    /// <item>WindowsPowerShell: powershell.exe only.</item>
+    /// <item>Unknown: throws — the script is incompatible.</item>
+    /// </list>
+    /// Each call re-resolves against the current PATH and standard install locations, so an
+    /// interpreter installed after startup is picked up (no permanently cached result).
+    /// </summary>
+    public static string ResolveShell(string? host)
+    {
+        switch (ParseHost(host))
+        {
+            case ShellHost.WindowsPowerShell:
+                return FindWindowsPowerShell()
+                    ?? throw new ShellResolutionException("Windows PowerShell (powershell.exe) is required but was not found.");
+
+            case ShellHost.Pwsh:
+                return FindPwsh()
+                    ?? throw new ShellResolutionException("PowerShell 7 is required but not installed. Install it from https://aka.ms/powershell, or set the script host to 'auto'.");
+
+            case ShellHost.Auto:
+                return FindPwsh() ?? FindWindowsPowerShell()
+                    ?? throw new ShellResolutionException("No PowerShell interpreter (pwsh.exe or powershell.exe) was found.");
+
+            default:
+                return throwUnknown();
+        }
+
+        string throwUnknown() =>
+            throw new ShellResolutionException($"Unknown script host '{host}'. Supported values are 'auto', 'pwsh', and 'powershell'.");
+    }
+
+    /// <summary>Best-effort interpreter name for display (the failure report) that never throws:
+    /// returns the resolved path when available, otherwise the interpreter that <em>would</em> be
+    /// used, or a marker for an unknown host. Kept separate from <see cref="ResolveShell"/> so
+    /// report generation can't fail on a missing/invalid interpreter.</summary>
+    public static string DescribeShell(string? host)
+    {
+        try
+        {
+            return ResolveShell(host);
+        }
+        catch (ShellResolutionException)
+        {
+            return ParseHost(host) switch
+            {
+                ShellHost.Pwsh => "pwsh.exe (not found)",
+                ShellHost.WindowsPowerShell => "powershell.exe (not found)",
+                ShellHost.Auto => "(no PowerShell found)",
+                _ => $"(unknown host '{host}')",
+            };
+        }
+    }
+
+    /// <summary>Finds pwsh.exe on PATH or in the standard PowerShell 7+ install locations.</summary>
+    private static string? FindPwsh() => FindExecutable("pwsh.exe", PwshInstallDirs());
+
+    /// <summary>Finds powershell.exe on PATH or in its fixed System32 location.</summary>
+    private static string? FindWindowsPowerShell() => FindExecutable("powershell.exe", WindowsPowerShellInstallDirs());
+
+    /// <summary>Standard install roots for PowerShell 7+: <c>%ProgramFiles%\PowerShell\&lt;version&gt;</c>
+    /// (both bitnesses) and the winget/WindowsApps shim location.</summary>
+    private static IEnumerable<string> PwshInstallDirs()
+    {
+        foreach (var pf in new[]
+                 {
+                     Environment.GetEnvironmentVariable("ProgramW6432"),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(pf))
+            {
+                continue;
+            }
+
+            var root = Path.Combine(pf, "PowerShell");
+            string[] versionDirs;
             try
             {
-                if (!string.IsNullOrWhiteSpace(dir) && File.Exists(Path.Combine(dir, exe)))
+                versionDirs = Directory.Exists(root) ? Directory.GetDirectories(root) : Array.Empty<string>();
+            }
+            catch (Exception)
+            {
+                versionDirs = Array.Empty<string>();
+            }
+
+            foreach (var dir in versionDirs)
+            {
+                yield return dir;
+            }
+        }
+
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrWhiteSpace(localAppData))
+        {
+            yield return Path.Combine(localAppData, "Microsoft", "WindowsApps");
+        }
+    }
+
+    /// <summary>Windows PowerShell ships at a single fixed path under the OS directory.</summary>
+    private static IEnumerable<string> WindowsPowerShellInstallDirs()
+    {
+        var windir = Environment.GetEnvironmentVariable("SystemRoot")
+                     ?? Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (!string.IsNullOrWhiteSpace(windir))
+        {
+            yield return Path.Combine(windir, "System32", "WindowsPowerShell", "v1.0");
+        }
+    }
+
+    /// <summary>Resolves <paramref name="exe"/> to a full path by scanning the current PATH first,
+    /// then <paramref name="extraDirs"/> (standard install locations). Returns null when not found.
+    /// Resolved fresh on every call — nothing is cached, so a newly installed interpreter is seen.</summary>
+    private static string? FindExecutable(string exe, IEnumerable<string> extraDirs)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrEmpty(path))
+        {
+            foreach (var dir in path.Split(Path.PathSeparator))
+            {
+                if (Contains(dir, exe, out var hit))
                 {
+                    return hit;
+                }
+            }
+        }
+
+        foreach (var dir in extraDirs)
+        {
+            if (Contains(dir, exe, out var hit))
+            {
+                return hit;
+            }
+        }
+
+        return null;
+
+        static bool Contains(string? dir, string exe, out string? fullPath)
+        {
+            fullPath = null;
+            if (string.IsNullOrWhiteSpace(dir))
+            {
+                return false;
+            }
+
+            try
+            {
+                var candidate = Path.Combine(dir, exe);
+                if (File.Exists(candidate))
+                {
+                    fullPath = candidate;
                     return true;
                 }
             }
             catch (Exception)
             {
-                // Ignore malformed PATH entries.
+                // Ignore malformed PATH entries / install paths.
             }
-        }
 
-        return false;
+            return false;
+        }
     }
 
     /// <summary>

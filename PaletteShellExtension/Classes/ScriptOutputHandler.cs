@@ -1,5 +1,4 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using PaletteShellExtension.Commands;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -8,74 +7,14 @@ using System.Linq;
 namespace PaletteShellExtension.Classes;
 
 /// <summary>
-/// Turns a script's captured stdout into a <see cref="CommandResult"/> according to its
-/// declared <c>[ScriptOutput(...)]</c> mode. Markdown is intentionally not handled here —
-/// it renders into a page and is routed by the caller before this is reached.
+/// Low-level helpers for acting on a script's captured stdout per its declared
+/// <c>[ScriptOutput(...)]</c> mode — set the clipboard, open a target, decide whether a target is
+/// safe to open unprompted. The mode dispatch itself lives in <see cref="ScriptRunDispatcher"/>,
+/// which runs on the async execution surfaces (never on the host's blocking COM call).
 /// </summary>
 internal static class ScriptOutputHandler
 {
-    public static CommandResult ToResult(string? mode, string? output, string? fileExtension = null, string? fileBaseName = null)
-    {
-        switch (mode?.Trim().ToLowerInvariant())
-        {
-            case "clipboard":
-                if (!string.IsNullOrEmpty(output))
-                {
-                    TrySetClipboard(output);
-                    return CommandResult.ShowToast("Copied to clipboard");
-                }
-                return CommandResult.ShowToast("Script completed");
-
-            // Treat stdout as a URL, file, or folder and let Windows open it with the
-            // registered default app. The first non-empty line is the target so scripts can
-            // use Write-Output without worrying about a trailing newline.
-            case "open":
-                var target = GetOpenTarget(output);
-                if (target is null)
-                {
-                    return CommandResult.ShowToast("Script completed without an open target");
-                }
-
-                // Only http(s) URLs and existing files/folders open without a prompt. Anything
-                // else — custom protocols (ms-settings:, shell:), file://, .lnk shortcuts,
-                // unknown targets — launches arbitrary handlers, so confirm with the exact
-                // target shown before letting Windows resolve it.
-                if (IsSafeOpenTarget(target))
-                {
-                    return OpenTarget(target);
-                }
-
-                return CommandResult.Confirm(new ConfirmationArgs
-                {
-                    Title = "Open script output?",
-                    Description = $"This script wants to open:\n\n{target}\n\nThis isn't a web link or a file on disk — it may launch another app or system handler. Open it?",
-                    PrimaryCommand = new CallbackCommand("Open", () => OpenTarget(target)),
-                    IsPrimaryCommandCritical = true,
-                });
-
-            // Write stdout to a temp file and open it in the user's editor. Useful for
-            // output that's too large or structured to be readable in a toast.
-            case "file":
-                if (!string.IsNullOrEmpty(output))
-                {
-                    EditorLauncher.OpenContent(output, fileExtension, fileBaseName);
-                    return CommandResult.ShowToast("Opened output in editor");
-                }
-                return CommandResult.ShowToast("Script completed");
-
-            // Run silently: confirm completion without surfacing the output.
-            case "none":
-                return CommandResult.ShowToast("Script completed");
-
-            // "toast" (and any unrecognized value) surfaces the captured output.
-            default:
-                return !string.IsNullOrEmpty(output)
-                    ? CommandResult.ShowToast(output)
-                    : CommandResult.ShowToast("Script completed");
-        }
-    }
-
-    private static CommandResult OpenTarget(string target)
+    internal static CommandResult OpenTarget(string target)
     {
         try
         {
@@ -129,7 +68,7 @@ internal static class ScriptOutputHandler
             .FirstOrDefault(line => line.Length > 0);
     }
 
-    private static void TrySetClipboard(string text)
+    internal static void TrySetClipboard(string text)
     {
         try
         {

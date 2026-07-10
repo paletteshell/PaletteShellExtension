@@ -68,16 +68,14 @@ internal sealed class ScriptParameterForm : FormContent
             // Build argument line from form values (quoting centralized in ScriptArgumentBuilder).
             var argsLine = ScriptArgumentBuilder.BuildFromForm(_manifest.Parameters, obj);
 
-            // Markdown output renders in place on this page, so run it asynchronously and show a
-            // "Running…" spinner while it works — a slow script (e.g. an event-log query) no
-            // longer leaves the form looking frozen. Other modes surface a quick toast and are
-            // typically instant, so they keep the simple synchronous path.
-            var runsInPage = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase)
-                && _onMarkdown is not null;
-
-            Func<CommandResult> run = runsInPage
-                ? () => StartMarkdownRun(argsLine)
-                : () => Execute(argsLine);
+            // Every waited run happens on a background thread and renders its result (or performs
+            // its clipboard/open/file effect) in place, showing a "Running…" spinner meanwhile — so
+            // a slow script no longer freezes the form while the host is blocked on the submit COM
+            // call. Elevated runs can't capture output, so they launch fire-and-forget and report
+            // completion immediately.
+            Func<CommandResult> run = _plan.RequiresAdmin
+                ? () => ExecuteElevated(argsLine)
+                : () => StartAsyncRun(argsLine);
 
             // Destructive scripts gate behind a confirmation dialog; only the dialog's
             // primary command runs the script (with the values already collected here).
@@ -101,23 +99,22 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    /// <summary>Runs a Markdown-output script on a background thread so the UI thread isn't
-    /// blocked, signalling the page to show a "Running…" spinner while it works and rendering the
-    /// result (or an error) in place when it finishes.</summary>
-    private CommandResult StartMarkdownRun(string argsLine)
+    /// <summary>Runs the script on a background thread so the host's submit COM call returns at
+    /// once, showing a "Running…" spinner meanwhile and rendering the result in place when it
+    /// finishes. On success the declared output effect (clipboard/open/file) is performed and a
+    /// short status is shown; Markdown/Toast modes render their output. Never reached for elevated
+    /// runs (they can't capture output — see <see cref="ExecuteElevated"/>).</summary>
+    private CommandResult StartAsyncRun(string argsLine)
     {
         _onRunStarted?.Invoke();
 
-        _ = Task.Run(() =>
+        _ = Task.Run(async () =>
         {
             string body;
             try
             {
-                // Markdown mode is never elevated (the compatibility gate blocks elevated +
-                // capturing output), so the plan's RequiresAdmin is false here.
-                var result = ScriptExecutionService.RunAndWait(_plan, argsLine);
-
-                body = FormatInPageResult(result);
+                var result = await ScriptExecutionService.RunAsync(_plan, argsLine);
+                body = FormatAsyncResult(result);
             }
             catch (Exception ex)
             {
@@ -126,7 +123,7 @@ internal sealed class ScriptParameterForm : FormContent
 
             try
             {
-                _onMarkdown!(body);
+                _onMarkdown?.Invoke(body);
             }
             finally
             {
@@ -137,9 +134,11 @@ internal sealed class ScriptParameterForm : FormContent
         return CommandResult.KeepOpen();
     }
 
-    /// <summary>Turns a run result into the Markdown body to render: failures and empty output
-    /// become a short note rather than a blank panel.</summary>
-    private static string FormatInPageResult(ScriptRunner.ScriptResult? result)
+    /// <summary>Turns a completed run into the Markdown body to render in place. Failures render
+    /// inline (with stderr); a success performs the declared output effect via
+    /// <see cref="ScriptRunDispatcher"/> and shows its status (or the rendered output for
+    /// Markdown/Toast modes).</summary>
+    private string FormatAsyncResult(ScriptRunner.ScriptResult? result)
     {
         if (result is null)
             return "_Failed to start script._";
@@ -155,55 +154,19 @@ internal sealed class ScriptParameterForm : FormContent
                 : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
         }
 
-        if (string.IsNullOrWhiteSpace(result.StandardOutput))
-            return "_Script completed with no output._";
-
-        return result.StandardOutput!;
+        var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
+        return ScriptRunDispatcher.Apply(_manifest, result.StandardOutput, scriptName).Status;
     }
 
-    /// <summary>Runs the script with the already-built argument line and turns its result into
-    /// a <see cref="CommandResult"/> per the declared output mode.</summary>
-    private CommandResult Execute(string argsLine)
+    /// <summary>Launches an elevated script fire-and-forget. Elevated scripts can't have their
+    /// output captured, so the routing gate only lets one reach here when its output is None —
+    /// there's nothing to wait for or surface, so this returns immediately.</summary>
+    private CommandResult ExecuteElevated(string argsLine)
     {
-        try
-        {
-            // Elevated scripts can't capture output, so the routing gate only lets an elevated
-            // script reach here when its output is None. Launch it elevated fire-and-forget
-            // (runas honors ArgumentList/args) — there's nothing to wait for or surface.
-            if (_plan.RequiresAdmin)
-            {
-                ScriptExecutionService.RunFireAndForget(_plan, argsLine);
-                return CommandResult.ShowToast("Script completed");
-            }
-
-            // Run script and wait for completion
-            var result = ScriptExecutionService.RunAndWait(_plan, argsLine);
-
-            // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
-            // "View details" opens the full failure report — a toast is too small and too
-            // short-lived to explain what went wrong.
-            if (result == null || result.TimedOut || result.ExitCode != 0)
-                return ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, result);
-
-            // Markdown output - render the result in place instead of a toast.
-            var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
-            if (wantsMarkdown && _onMarkdown is not null)
-            {
-                _onMarkdown(result.StandardOutput ?? "");
-                return CommandResult.KeepOpen();
-            }
-
-            // Clipboard / File / Status / Toast / None are handled identically to the no-parameter path.
-            return ScriptOutputHandler.ToResult(
-                _manifest.Output,
-                result.StandardOutput,
-                _manifest.FileExtension,
-                System.IO.Path.GetFileNameWithoutExtension(_scriptPath));
-        }
-        catch (Exception)
-        {
-            return CommandResult.GoBack();
-        }
+        var started = ScriptExecutionService.RunFireAndForget(_plan, argsLine);
+        return started
+            ? CommandResult.ShowToast("Script completed")
+            : ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, null);
     }
 
     /// <summary>Returns the label/name of each required parameter whose submitted value is

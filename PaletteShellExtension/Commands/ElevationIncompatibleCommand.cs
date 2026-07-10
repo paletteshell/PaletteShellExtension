@@ -13,6 +13,7 @@ internal sealed partial class ElevationIncompatibleCommand : InvokableCommand
     public override string Name => "Can't run elevated with output";
     public override IconInfo Icon => new(""); // Warning
 
+    // A toast truncated the message; show the full reason in a dialog the user can read.
     public override CommandResult Invoke() =>
-        CommandResult.ShowToast(ScriptElevation.IncompatibleReason());
+        WarningDialog.Show("Can't run elevated with output", ScriptElevation.IncompatibleReason());
 }

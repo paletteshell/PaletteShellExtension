@@ -56,7 +56,7 @@ internal static class ScriptFailureReport
         sb.AppendLine(culture, $"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine();
         sb.AppendLine(culture, $"Script:   {scriptPath}");
-        sb.AppendLine(culture, $"Shell:    {ScriptRunner.ResolveShell(host)}");
+        sb.AppendLine(culture, $"Shell:    {ScriptRunner.DescribeShell(host)}");
         sb.AppendLine(culture, $"Args:     {(string.IsNullOrWhiteSpace(args) ? "(none)" : RedactArgs(args))}");
         sb.AppendLine(culture, $"Outcome:  {DescribeOutcome(result)}");
         if (result?.DurationMs is { } duration)

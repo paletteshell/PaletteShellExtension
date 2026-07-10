@@ -171,3 +171,7 @@ BenchmarkDotNet.Artifacts/
 /PaletteShellExtension/bundle_mapping.txt
 signing/
 /PaletteShellExtension/*.msixbundle
+/.github/skills
+/.agents/skills
+/agent/skills
+/PaletteShellExtension/IntegrationTestScripts/README.md

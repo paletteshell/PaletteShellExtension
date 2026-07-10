@@ -516,14 +516,89 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
-    public void UnbalancedParamBlock_DoesNotThrow_AndYieldsNoParameters()
+    public void UnbalancedParamBlock_FailsClosed_WithDiagnostic()
     {
+        // A param block with no matching ')' is malformed. It must NOT parse as a parameterless
+        // script (which could launch fire-and-forget with the real params never reaching
+        // PowerShell) — it fails closed so the caller shows a repair row.
         using var file = new TestScriptFile("param(\n    [string]$Name");
 
-        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+        var result = PowerShellScriptParser.TryParse(file.Path);
 
-        Assert.NotNull(manifest);
-        Assert.Empty(manifest!.Parameters);
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+        Assert.Null(PowerShellScriptParser.TryParseManifest(file.Path));
+    }
+
+    [Fact]
+    public void UnbalancedAttributeBracket_FailsClosed()
+    {
+        // An attribute above param(...) with no closing ']' can't be scoped safely.
+        using var file = new TestScriptFile("[ConfirmBeforeRun('sure?'\nparam(\n    [string]$Name\n)");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void UnbalancedSafetyAttribute_NoParamBlock_FailsClosed()
+    {
+        // A recognized safety attribute with no closing ']' and no param() block would otherwise
+        // be dropped silently, losing its elevation gate. Must fail closed.
+        using var file = new TestScriptFile("[RequiresElevation(\nRemove-Item C:\\temp -Recurse");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void OrdinaryBodyBrackets_NoParamBlock_DoNotFailClosed()
+    {
+        // Type accelerators and indexing must not be mistaken for malformed attributes.
+        using var file = new TestScriptFile("$a = @(1,2,3)\n[int]$b = $a[0]\nWrite-Output \"$b]\"");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.NotNull(result.Manifest);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void UnknownOutputMode_FailsClosed()
+    {
+        using var file = new TestScriptFile("[ScriptOutput('Bogus')]\nparam()");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void NonNumericTimeout_FailsClosed()
+    {
+        using var file = new TestScriptFile("[ScriptTimeout('soon')]\nparam()");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void WellFormedScript_HasNoErrorsAndNotTruncated()
+    {
+        using var file = new TestScriptFile("[ScriptOutput('Clipboard')]\nparam(\n    [string]$Name = 'x'\n)");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.NotNull(result.Manifest);
+        Assert.False(result.HasErrors);
+        Assert.False(result.WasTruncated);
     }
 
     // ----- Path token expansion ---------------------------------------------------------------

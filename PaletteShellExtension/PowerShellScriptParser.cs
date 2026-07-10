@@ -29,11 +29,19 @@ internal static partial class PowerShellScriptParser
     // metadata extends past this is pathological and simply parses as metadata-less.
     private const int MetadataReadLimitChars = 64 * 1024;
 
-    public static ScriptManifest? TryParseManifest(string ps1Path)
+    /// <summary>
+    /// Parses a script's metadata, returning both any manifest and the diagnostics gathered along
+    /// the way. When the metadata is malformed (unbalanced <c>param()</c> or attribute brackets, a
+    /// critical attribute with an invalid value, an ununderstood parameter, or metadata truncated
+    /// mid-structure by the read cap) the result <em>fails closed</em>: its
+    /// <see cref="ScriptParseResult.Manifest"/> is null and callers must surface the script as
+    /// needing repair rather than run a partially understood script.
+    /// </summary>
+    public static ScriptParseResult TryParse(string ps1Path)
     {
         if (!File.Exists(ps1Path))
         {
-            return null;
+            return new ScriptParseResult(null, [], false);
         }
 
         try
@@ -41,27 +49,46 @@ internal static partial class PowerShellScriptParser
             // A UTF-8 file never decodes to more chars than it has bytes, so sizing the
             // buffer by file length keeps small scripts (the normal case) from paying for
             // the full cap.
-            var maxChars = (int)Math.Min(new FileInfo(ps1Path).Length, MetadataReadLimitChars);
+            var byteLength = new FileInfo(ps1Path).Length;
+            var maxChars = (int)Math.Min(byteLength, MetadataReadLimitChars);
             using var reader = new StreamReader(ps1Path, Encoding.UTF8);
             var buffer = new char[maxChars];
             var read = reader.ReadBlock(buffer, 0, buffer.Length);
             var content = new string(buffer, 0, read);
-            return ParseManifestFromContent(content, Path.GetFileNameWithoutExtension(ps1Path));
+
+            // Truncation is possible only when the file has more bytes than the char cap (UTF-8
+            // never decodes to more chars than bytes). Whether it actually matters is decided in
+            // ParseContent: a body cut off after a complete metadata header is fine, but a
+            // param()/attribute block cut off mid-structure fails closed.
+            var wasTruncated = byteLength > MetadataReadLimitChars;
+            return ParseContent(content, Path.GetFileNameWithoutExtension(ps1Path), wasTruncated);
         }
         catch (Exception ex)
         {
             Log.Warn($"Failed to parse manifest for '{ps1Path}': {ex.Message}");
-            return null;
+            return new ScriptParseResult(null, [], false);
         }
     }
+
+    /// <summary>Convenience shim over <see cref="TryParse"/> for callers that only want the
+    /// manifest and treat a fail-closed result the same as "no metadata": returns null both when
+    /// the file is unreadable and when the metadata was malformed.</summary>
+    public static ScriptManifest? TryParseManifest(string ps1Path) => TryParse(ps1Path).Manifest;
 
     /// <summary>Parses a manifest from raw script text rather than a file on disk — used for
     /// embedded sample-script resources, which aren't written to disk until after this decides
     /// whether they should be. <paramref name="fallbackTitle"/> stands in for the file name
-    /// when there's no <c>.SYNOPSIS</c> and (unlike <see cref="TryParseManifest"/>) no path to
+    /// when there's no <c>.SYNOPSIS</c> and (unlike <see cref="TryParse"/>) no path to
     /// derive one from.</summary>
-    internal static ScriptManifest ParseManifestFromContent(string content, string fallbackTitle = "")
+    internal static ScriptManifest? ParseManifestFromContent(string content, string fallbackTitle = "")
+        => ParseContent(content, fallbackTitle).Manifest;
+
+    /// <summary>Core parser shared by <see cref="TryParse"/> (file) and
+    /// <see cref="ParseManifestFromContent"/> (raw text). <paramref name="wasTruncated"/> reports
+    /// whether the caller had to cut the input at the metadata read cap.</summary>
+    internal static ScriptParseResult ParseContent(string content, string fallbackTitle = "", bool wasTruncated = false)
     {
+        var diagnostics = new List<ScriptParseDiagnostic>();
         var help = ParseCommentHelp(content);
 
         var manifest = new ScriptManifest
@@ -80,20 +107,56 @@ internal static partial class PowerShellScriptParser
         string? paramBlock = null;
         if (paramKeyword.Success)
         {
+            // ParamKeywordRegex matches through the '(', so IndexOf always finds it here.
             var openParen = cleaned.IndexOf('(', paramKeyword.Index);
             if (openParen >= 0)
             {
                 paramBlock = ExtractBalanced(cleaned, openParen, '(', ')');
+                if (paramBlock is null)
+                {
+                    // No matching ')'. Rather than silently treat this as a parameterless script
+                    // (which could launch a script whose real params never reached PowerShell),
+                    // fail closed. If the read was capped, the cap is the likely cause.
+                    diagnostics.Add(new ScriptParseDiagnostic(
+                        ScriptParseSeverity.Error,
+                        wasTruncated
+                            ? "The param(...) block runs past the part of the file PaletteShell reads — its metadata is too large."
+                            : "The param(...) block is missing its closing ')'."));
+                }
             }
+
             attributeZone = cleaned[..paramKeyword.Index];
+
+            // An unbalanced attribute bracket in the header means the [Script*] scan can't be
+            // trusted — a mis-scoped bracket could swallow a confirmation/elevation/output
+            // requirement — so fail closed too. Only checked when a param keyword bounds the
+            // header; without one the "zone" is the whole body, whose ordinary array/index
+            // brackets aren't ours to balance.
+            if (paramBlock is not null && HasUnbalancedBrackets(attributeZone))
+            {
+                diagnostics.Add(new ScriptParseDiagnostic(
+                    ScriptParseSeverity.Error,
+                    "A [ ... ] attribute above param(...) is missing its closing bracket."));
+            }
         }
         else
         {
+            // No param keyword, so the "zone" is the whole body and a general bracket-balance
+            // check would false-positive on ordinary code ([int[]], $a[0], here-strings). Still
+            // guard the safety-relevant case: a recognized [Script*]/Requires* attribute with no
+            // closing ']' would otherwise be dropped silently (e.g. an unbalanced
+            // [RequiresElevation(...] losing its elevation gate), so fail closed on that alone.
             attributeZone = cleaned;
+            if (HasUnbalancedRecognizedAttribute(attributeZone))
+            {
+                diagnostics.Add(new ScriptParseDiagnostic(
+                    ScriptParseSeverity.Error,
+                    "A [ ... ] attribute is missing its closing bracket."));
+            }
         }
 
         // Script-level [Script*] attributes live before the param keyword.
-        ParseScriptAttributes(attributeZone, manifest);
+        ParseScriptAttributes(attributeZone, manifest, diagnostics);
 
         // A script that predates [ScriptVersion(...)] (or simply omits it) is assumed to be
         // at the baseline version rather than "no version" - keeps every manifest comparable
@@ -127,10 +190,118 @@ internal static partial class PowerShellScriptParser
                 {
                     manifest.Parameters.Add(parameter);
                 }
+                else
+                {
+                    // A non-empty declaration with no recognizable $variable — fail closed rather
+                    // than run the script with a parameter silently dropped from its form.
+                    diagnostics.Add(new ScriptParseDiagnostic(
+                        ScriptParseSeverity.Error,
+                        "A parameter declaration couldn't be understood."));
+                }
             }
         }
 
-        return manifest;
+        // Fail closed: any error means the metadata is only partially understood, so hand back
+        // diagnostics with no manifest instead of a runnable one.
+        var manifestOrNull = diagnostics.Any(d => d.Severity == ScriptParseSeverity.Error)
+            ? null
+            : manifest;
+        return new ScriptParseResult(manifestOrNull, diagnostics, wasTruncated);
+    }
+
+    /// <summary>Quote-aware check that every <c>[ ]</c> and <c>( )</c> in <paramref name="s"/> is
+    /// balanced. Used to reject a malformed attribute header rather than mis-scope its brackets.</summary>
+    private static bool HasUnbalancedBrackets(string s)
+    {
+        int bracket = 0, paren = 0;
+        char quote = '\0';
+
+        foreach (var c in s)
+        {
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            switch (c)
+            {
+                case '\'' or '"':
+                    quote = c;
+                    break;
+                case '[':
+                    bracket++;
+                    break;
+                case ']':
+                    if (--bracket < 0)
+                    {
+                        return true;
+                    }
+                    break;
+                case '(':
+                    paren++;
+                    break;
+                case ')':
+                    if (--paren < 0)
+                    {
+                        return true;
+                    }
+                    break;
+            }
+        }
+
+        return bracket != 0 || paren != 0;
+    }
+
+    /// <summary>
+    /// Quote-aware check for a recognized <c>[Script*]</c>/<c>Requires*</c> attribute whose
+    /// opening <c>[</c> has no matching <c>]</c>. Unlike <see cref="HasUnbalancedBrackets"/> this
+    /// is safe to run over a whole script body: it only reacts to brackets whose leading
+    /// identifier is one we act on, so ordinary type accelerators (<c>[int]</c>) and indexing
+    /// (<c>$a[0]</c>) can't trigger it. Used on the no-param path, where the "attribute zone" is
+    /// the entire body and a general balance check would false-positive.
+    /// </summary>
+    private static bool HasUnbalancedRecognizedAttribute(string s)
+    {
+        char quote = '\0';
+
+        for (int i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            if (c is '\'' or '"')
+            {
+                quote = c;
+            }
+            else if (c == '[')
+            {
+                // Read the identifier immediately after '[' and only bother matching brackets
+                // when it's an attribute we recognize.
+                int j = i + 1;
+                while (j < s.Length && (char.IsLetterOrDigit(s[j]) || s[j] == '_'))
+                {
+                    j++;
+                }
+
+                if (j > i + 1 && KnownAttributes.Contains(s[(i + 1)..j]) && ExtractBalanced(s, i, '[', ']') is null)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public static string? ExpandPathTokens(string? path, string scriptPath)
@@ -284,7 +455,15 @@ internal static partial class PowerShellScriptParser
 
     // ----- Script-level attributes ------------------------------------------------------
 
-    private static void ParseScriptAttributes(string zone, ScriptManifest manifest)
+    // Output modes PaletteShell knows how to route. An unrecognized mode is a fail-closed error:
+    // it would otherwise fall through to fire-and-forget (like "None") and hide the script's real
+    // intent — a script meant to show output would run silently and report false success.
+    private static readonly HashSet<string> KnownOutputModes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "None", "Toast", "Clipboard", "Open", "File", "Markdown", "Result", "List"
+    };
+
+    private static void ParseScriptAttributes(string zone, ScriptManifest manifest, List<ScriptParseDiagnostic> diagnostics)
     {
         foreach (var group in FindBracketGroups(zone))
         {
@@ -309,22 +488,39 @@ internal static partial class PowerShellScriptParser
                         ? values[0]
                         : "Are you sure you want to run this script?";
                     break;
-                case "ScriptTimeout" when values.Count >= 1 && int.TryParse(values[0], out var timeout):
-                    manifest.TimeoutMs = ValidateTimeout(timeout);
+                case "ScriptTimeout" when values.Count >= 1:
+                    if (int.TryParse(values[0], out var timeout))
+                    {
+                        manifest.TimeoutMs = ValidateTimeout(timeout);
+                    }
+                    else
+                    {
+                        // A non-numeric timeout is a critical attribute we can't honor — fail
+                        // closed rather than silently run with no timeout at all.
+                        diagnostics.Add(new ScriptParseDiagnostic(
+                            ScriptParseSeverity.Error,
+                            $"ScriptTimeout value {EscapeForLog(values[0])} isn't a number."));
+                    }
                     break;
                 case "ScriptOutput" when values.Count >= 1:
                     // The mode may carry an extension hint for File mode after a colon,
                     // e.g. 'File:csv' opens the temp file as .csv.
                     var outputSpec = values[0];
                     var colon = outputSpec.IndexOf(':');
-                    if (colon >= 0)
+                    var outputMode = colon >= 0 ? outputSpec[..colon].Trim() : outputSpec;
+                    if (!KnownOutputModes.Contains(outputMode))
                     {
-                        manifest.Output = outputSpec[..colon].Trim();
-                        manifest.FileExtension = outputSpec[(colon + 1)..].Trim();
+                        diagnostics.Add(new ScriptParseDiagnostic(
+                            ScriptParseSeverity.Error,
+                            $"ScriptOutput mode {EscapeForLog(outputMode)} isn't recognized."));
                     }
                     else
                     {
-                        manifest.Output = outputSpec;
+                        manifest.Output = outputMode;
+                        if (colon >= 0)
+                        {
+                            manifest.FileExtension = outputSpec[(colon + 1)..].Trim();
+                        }
                     }
                     break;
                 case "ScriptGroup" when values.Count >= 1:

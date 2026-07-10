@@ -12,6 +12,11 @@ internal enum ScriptCompatibilityKind
     /// <summary>The script asks to run elevated but also declares a capturing output mode — an
     /// impossible combination (elevation can't redirect stdout).</summary>
     ElevationIncompatible,
+
+    /// <summary>The script declares a <c>[ScriptHost(...)]</c> value that isn't a recognized
+    /// interpreter (not auto/pwsh/powershell). Caught at discovery so it never runs under the
+    /// wrong shell via a silent fallback.</summary>
+    UnknownHost,
 }
 
 /// <summary>
@@ -22,7 +27,8 @@ internal enum ScriptCompatibilityKind
 internal readonly record struct ScriptCompatibility(
     ScriptCompatibilityKind Kind,
     string? RequiredVersion = null,
-    bool TooNew = false)
+    bool TooNew = false,
+    string? BadHost = null)
 {
     private static readonly ScriptCompatibility Compatible = new(ScriptCompatibilityKind.Ok);
 
@@ -33,6 +39,12 @@ internal readonly record struct ScriptCompatibility(
 
         if (!AppVersion.IsCompatible(manifest.MinVersion, manifest.MaxVersion, out var required, out var tooNew))
             return new ScriptCompatibility(ScriptCompatibilityKind.RequiresUpdate, required!.ToString(), tooNew);
+
+        // A declared host that parses to Unknown is a manifest error: block it here rather than
+        // let the runner pick an interpreter the script never asked for. Null means "no override"
+        // (the configured default applies), which is always a valid token.
+        if (manifest.Host is not null && ScriptRunner.ParseHost(manifest.Host) == ScriptRunner.ShellHost.Unknown)
+            return new ScriptCompatibility(ScriptCompatibilityKind.UnknownHost, BadHost: manifest.Host);
 
         if (ScriptElevation.IsElevatedOutputIncompatible(manifest))
             return new ScriptCompatibility(ScriptCompatibilityKind.ElevationIncompatible);
