@@ -495,7 +495,10 @@ internal static partial class PowerShellScriptParser
 
         return psType.ToLowerInvariant() switch
         {
-            "switch" or "bool" or "boolean" => "bool",
+            // A [switch] is supplied by presence, not by value, so it needs distinct
+            // argument-line handling from [bool] (see ScriptArgumentBuilder).
+            "switch" => "switch",
+            "bool" or "boolean" => "bool",
             "int" or "int32" or "int64" or "long" => "int",
             "double" or "float" or "single" or "decimal" => "number",
             _ => "string"
@@ -517,6 +520,7 @@ internal static partial class PowerShellScriptParser
         switch (uiType)
         {
             case "bool":
+            case "switch":
                 return isTrue;
             case "int":
                 var i = StripQuotes(expr);

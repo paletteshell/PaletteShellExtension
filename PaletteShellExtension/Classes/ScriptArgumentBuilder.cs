@@ -21,6 +21,16 @@ internal static class ScriptArgumentBuilder
         {
             var value = values[param.Name]?.ToString();
 
+            // A [switch] is supplied by presence: emit bare -Name when on, omit entirely when
+            // off. Emitting -Name $false (as [bool] does) would mis-bind, and a false toggle
+            // would wrongly register in $PSBoundParameters.
+            if (param.Type == "switch")
+            {
+                if (value != null && value.Equals("true", StringComparison.OrdinalIgnoreCase))
+                    args.Add($"-{param.Name}");
+                continue;
+            }
+
             // Skip empty optional parameters so the script's own default applies.
             if (string.IsNullOrWhiteSpace(value) && param.Required != true)
                 continue;

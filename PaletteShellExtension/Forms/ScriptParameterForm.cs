@@ -281,6 +281,7 @@ internal sealed class ScriptParameterForm : FormContent
         switch (param.Type)
         {
             case "bool":
+            case "switch":
                 return new JsonObject
                 {
                     ["type"] = "Input.Toggle",
