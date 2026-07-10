@@ -87,12 +87,8 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         Directory.CreateDirectory(folder);
         _pins = new PinnedScripts(folder);
         CopySampleScripts(folder);
+        CopyPowerShellModule(folder);
         RefreshFiles();
-
-        // The module/docs/dll files copied here are never *.ps1 files, so RefreshFiles()
-        // never picks them up and they can't affect what GetItems() shows — safe to push
-        // off the constructor's critical path instead of blocking the first render on them.
-        _ = Task.Run(() => CopyPowerShellModule(folder));
     }
 
     // Called by the setup form once the user chooses a folder for the first time. The form
@@ -143,7 +139,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 Directory.CreateDirectory(configuredFolder);
                 _pins = new PinnedScripts(configuredFolder);
                 CopySampleScripts(configuredFolder);
-                _ = Task.Run(() => CopyPowerShellModule(configuredFolder));
+                CopyPowerShellModule(configuredFolder);
             }
 
             var rootDirectory = _rootDirectory;
