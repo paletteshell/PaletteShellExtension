@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Classes;
@@ -288,9 +289,16 @@ internal static partial class ScriptRunner
         bool requiresAdmin = false,
         int? timeoutMs = null,
         bool reportProgress = true,
-        IReadOnlyList<string>? requiredModules = null)
+        IReadOnlyList<string>? requiredModules = null,
+        CancellationToken cancellationToken = default)
     {
         Process? proc = null;
+
+        // Same hard ceiling as the synchronous runner: a null or oversized timeout is
+        // clamped to MaxTimeoutMs so no async path can wait forever.
+        var effectiveTimeoutMs = Math.Min(
+            timeoutMs ?? PowerShellScriptParser.MaxTimeoutMs,
+            PowerShellScriptParser.MaxTimeoutMs);
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -330,33 +338,39 @@ internal static partial class ScriptRunner
                 stderrTask = proc.StandardError.ReadToEndAsync();
             }
 
-            if (timeoutMs.HasValue)
+            try
             {
-                try
-                {
-                    await proc.WaitForExitAsync().WaitAsync(TimeSpan.FromMilliseconds(timeoutMs.Value)).ConfigureAwait(false);
-                }
-                catch (TimeoutException)
-                {
-                    result.TimedOut = true;
-                    result.DurationMs = stopwatch.ElapsedMilliseconds;
-                    try { proc.Kill(entireProcessTree: true); }
-                    catch (Exception)
-                    {
-                        // Ignore failures killing the process tree.
-                    }
-                    // Killing closes the pipes, so the reads complete with whatever was
-                    // buffered; capture that partial output before returning. The Warn comes
-                    // after the drain so it can include the script's stderr.
-                    result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
-                    result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
-                    Log.Warn($"Script '{scriptPath}' timed out after {timeoutMs.Value}ms and was killed{ScriptFailureReport.StderrForLog(result.StandardError)}");
-                    return result;
-                }
+                await proc.WaitForExitAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeoutMs), cancellationToken)
+                    .ConfigureAwait(false);
             }
-            else
+            catch (TimeoutException)
             {
-                await proc.WaitForExitAsync().ConfigureAwait(false);
+                result.TimedOut = true;
+                result.DurationMs = stopwatch.ElapsedMilliseconds;
+                try { proc.Kill(entireProcessTree: true); }
+                catch (Exception)
+                {
+                    // Ignore failures killing the process tree.
+                }
+                // Killing closes the pipes, so the reads complete with whatever was
+                // buffered; capture that partial output before returning. The Warn comes
+                // after the drain so it can include the script's stderr.
+                result.StandardOutput = await AwaitReadAsync(stdoutTask).ConfigureAwait(false);
+                result.StandardError = await AwaitReadAsync(stderrTask).ConfigureAwait(false);
+                Log.Warn($"Script '{scriptPath}' timed out after {stopwatch.ElapsedMilliseconds}ms (limit {effectiveTimeoutMs}ms) and was killed{ScriptFailureReport.StderrForLog(result.StandardError)}");
+                return result;
+            }
+            catch (OperationCanceledException)
+            {
+                // Caller cancelled (e.g. a live-provider page superseded this run). Kill the
+                // orphaned child so it isn't left running, then propagate the cancellation.
+                try { proc.Kill(entireProcessTree: true); }
+                catch (Exception)
+                {
+                    // Ignore failures killing the process tree.
+                }
+                throw;
             }
 
             // The process has exited, so the streams are closed and the reads finish
