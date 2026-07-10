@@ -22,7 +22,16 @@ internal static class EditorLauncher
                  ?? Environment.GetEnvironmentVariable("VISUAL")
                  ?? Environment.GetEnvironmentVariable("EDITOR")
                  ?? "notepad.exe";
-        Process.Start(new ProcessStartInfo(editor, $"\"{path}\"") { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo(editor, $"\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            // A misconfigured $EDITOR/$VISUAL or a missing handler must not throw through a
+            // Command Palette invocation. Log and give up quietly — the temp file still exists.
+            Log.Warn($"Failed to open '{path}' in editor '{editor}': {ex.Message}");
+        }
     }
 
     /// <summary>

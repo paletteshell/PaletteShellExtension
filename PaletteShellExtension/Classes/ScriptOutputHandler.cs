@@ -1,6 +1,8 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using PaletteShellExtension.Commands;
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 
 namespace PaletteShellExtension.Classes;
@@ -34,16 +36,22 @@ internal static class ScriptOutputHandler
                     return CommandResult.ShowToast("Script completed without an open target");
                 }
 
-                try
+                // Only http(s) URLs and existing files/folders open without a prompt. Anything
+                // else — custom protocols (ms-settings:, shell:), file://, .lnk shortcuts,
+                // unknown targets — launches arbitrary handlers, so confirm with the exact
+                // target shown before letting Windows resolve it.
+                if (IsSafeOpenTarget(target))
                 {
-                    Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
-                    return CommandResult.ShowToast("Opened script output");
+                    return OpenTarget(target);
                 }
-                catch (Exception ex)
+
+                return CommandResult.Confirm(new ConfirmationArgs
                 {
-                    Log.Warn($"Failed to open script output target '{target}': {ex.Message}");
-                    return CommandResult.ShowToast($"Couldn't open script output: {ex.Message}");
-                }
+                    Title = "Open script output?",
+                    Description = $"This script wants to open:\n\n{target}\n\nThis isn't a web link or a file on disk — it may launch another app or system handler. Open it?",
+                    PrimaryCommand = new CallbackCommand("Open", () => OpenTarget(target)),
+                    IsPrimaryCommandCritical = true,
+                });
 
             // Write stdout to a temp file and open it in the user's editor. Useful for
             // output that's too large or structured to be readable in a toast.
@@ -64,6 +72,46 @@ internal static class ScriptOutputHandler
                 return !string.IsNullOrEmpty(output)
                     ? CommandResult.ShowToast(output)
                     : CommandResult.ShowToast("Script completed");
+        }
+    }
+
+    private static CommandResult OpenTarget(string target)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            return CommandResult.ShowToast("Opened script output");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Failed to open script output target '{target}': {ex.Message}");
+            return CommandResult.ShowToast($"Couldn't open script output: {ex.Message}");
+        }
+    }
+
+    // Open without prompting only for web links and real files/folders on disk. .lnk
+    // shortcuts are excluded even when they exist: launching one runs whatever it points at.
+    internal static bool IsSafeOpenTarget(string target)
+    {
+        if (Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return true;
+        }
+
+        if (target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            return File.Exists(target) || Directory.Exists(target);
+        }
+        catch
+        {
+            // Malformed path (bad chars, too long) — treat as unsafe and let the confirm show it.
+            return false;
         }
     }
 
