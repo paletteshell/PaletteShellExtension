@@ -67,7 +67,7 @@ Defined in `PaletteScriptAttributes.psm1`. Only these are recognized; anything e
 | `[ScriptCwd('{ScriptDir}')]` | Working directory (supports path tokens, below) |
 | `[ScriptGroup('Category')]` | Group name used by tooling such as the Script Manager catalog browser |
 | `[ScriptTags('foo,bar,baz')]` | Comma-delimited free-form tags used by tooling such as the Script Manager catalog browser |
-| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) — lets tools detect when a newer copy is available. A script that omits it is stamped with `1.0.0` on load |
+| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) — lets tools detect when a newer copy is available. A script that omits it is treated as `1.0.0` (the file is not rewritten) |
 | `[RequiresPaletteShellMinimum('1.2.0')]` | Minimum PaletteShell app version required. If the installed app is older, the row shows "Requires an update" instead of running the script. Defaults to `0.0.6` (the last release before this attribute existed) when omitted |
 | `[RequiresPaletteShellMaximum('2.0.0')]` | Maximum PaletteShell app version this script still works on. If the installed app is newer, the row shows "Requires an update" instead of running the script. Optional — use only if your script depends on behavior later removed or changed |
 | `[ScriptIcon('🚀')]` | Emoji or glyph shown on the row |

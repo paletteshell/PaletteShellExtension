@@ -41,7 +41,7 @@ When the extension is activated, `PaletteShellExtensionPage` does the following:
 1. Resolves the scripts folder: the one saved in [Settings](#-settings), or — for an install that predates that setting — the existing `Documents\PaletteShellScripts` if it's already there. If neither exists yet, the page shows a **"Choose scripts folder"** prompt (suggesting `Documents\PaletteShellScripts`) instead of a script list, and the rest of this flow runs once you submit it.
 2. Creates that directory if it doesn't exist.
 3. Copies the embedded sample scripts (only files that aren't already there, so your edits are never overwritten).
-4. Copies the `PaletteScriptAttributes.psm1` module and `TextCopy.dll` next to the scripts so they're available at runtime.
+4. Copies the `PaletteScriptAttributes.psm1` module, `TextCopy.dll`, and the `AGENTS.md` authoring spec next to the scripts so they're available at runtime.
 5. Enumerates every `*.ps1` file in the folder (top level only) and builds the command list.
 
 The list always begins with four built-in actions:
@@ -64,7 +64,7 @@ If a script fails to parse (e.g. a malformed `param()` block), it isn't dropped 
 
 A script that declares `[RequiresPaletteShellMinimum(...)]` / `[RequiresPaletteShellMaximum(...)]` outside the installed app's version range also stays visible, but shows a **⚠ Requires an update** row (naming the version it needs) instead of running, so you know to update PaletteShell rather than seeing a broken script.
 
-Scripts are also **version-stamped on load**: any script that declares no `[ScriptVersion(...)]` gets `[ScriptVersion('1.0.0')]` backfilled into it (idempotent and best-effort — files it can't safely rewrite are left untouched), so every managed script carries a version tools can compare.
+A script that declares no `[ScriptVersion(...)]` is **treated as `1.0.0`** when loaded — the file itself is never rewritten. Scripts scaffolded through the **"Create new script"** wizard get a `[ScriptVersion('1.0.0')]` written in up front, so every managed script carries a version tools can compare.
 
 > ℹ️ New scripts and edits are picked up only when you run **"Reload scripts"** — this is intentional, not a bug. Reloading shows a **"Reloaded N scripts"** toast so you know the rescan ran.
 
@@ -193,7 +193,8 @@ The agent reads `AGENTS.md`, produces a compliant script in the folder, and you 
 | `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture. Omit it to use the [default timeout setting](#-settings) |
 | `[ScriptGroup('Category')]` | Group/category name for tooling such as the Script Manager catalog browser |
 | `[ScriptTags('foo,bar')]` | Comma-delimited free-form tags for tooling such as the Script Manager catalog browser |
-| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) so tooling can detect when a newer copy is available. Scripts that omit it are stamped with `1.0.0` on load |
+| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) so tooling can detect when a newer copy is available. A script that omits it is treated as `1.0.0` |
+| `[RequiresModule('ImportExcel')]` | PowerShell module the script needs installed (repeat for more than one). Checked before the run — a missing module fails with an `Install-Module -Name … -Scope CurrentUser` hint instead of the script's own cryptic error |
 | `[RequiresPaletteShellMinimum('1.2.0')]` | Minimum PaletteShell version required; older installs show a **"Requires an update"** row instead of running |
 | `[RequiresPaletteShellMaximum('2.0.0')]` | Maximum PaletteShell version supported; newer installs show a **"Requires an update"** row instead of running |
 | `[ScriptIcon('🚀')]` | Icon emoji or glyph shown in the palette |
@@ -327,6 +328,8 @@ Parameters in your `param()` block automatically become form fields:
 - `[ValidateSet('A','B','C')]` → dropdown
 - `[Parameter(Mandatory=$true)]` → required field
 
+By default a form value reaches the script as a **literal string**. Mark a parameter `[AllowExpression()]` to have its value passed through as an evaluated PowerShell expression instead of being quoted.
+
 ### Helper Functions
 
 When you `using module .\PaletteScriptAttributes.psm1`, these functions are available:
@@ -386,16 +389,22 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 |------|----------------|
 | `PaletteShellExtension.cs` | Extension entry point; provides the commands provider to Command Palette |
 | `PaletteShellExtensionCommandsProvider.cs` | Registers the top-level PaletteShell command |
-| `Pages/PaletteShellExtensionPage.cs` | Main list page — discovery, sample/module copying, item building |
+| `Pages/PaletteShellExtensionPage.cs` | Main list page — discovery, sample/module/`AGENTS.md` copying, item building |
+| `Classes/SampleScriptInstaller.cs` | Tracks the hash of each written sample plus the last synced app version (in `sample-scripts.json`) so an unchanged install can skip the sample sync |
 | `PowerShellScriptParser.cs` | Parses script metadata and parameters with a lightweight text parser |
 | `Classes/ScriptManifest.cs`, `ScriptParameter.cs` | Parsed metadata models |
-| `Classes/ScriptRunner.cs` | Builds the process and runs scripts (fire-and-forget or wait-and-capture) |
+| `Classes/ScriptRunner.cs` | Builds the process and runs scripts (fire-and-forget or wait-and-capture); preflights `[RequiresModule]` dependencies |
 | `Classes/ScriptOutputHandler.cs` | Maps captured output to a result per the script's output mode |
+| `Classes/ScriptFailureReport.cs` | Models a failed run for `ScriptFailurePresenter` to surface |
+| `Classes/ScriptElevation.cs` | Detects elevation requirement and gates it against incompatible output modes |
 | `Classes/ScriptStatus.cs` | Shows the "Running…" spinner in the status bar while a script runs |
 | `Classes/PinnedScripts.cs` | Tracks pinned scripts (persisted to `pinned.txt`) so they sort to the top |
-| `Classes/ScriptVersionStamper.cs` | Backfills `[ScriptVersion('1.0.0')]` into scripts that omit it during the folder scan (idempotent, best-effort) |
+| `Classes/InstalledCommunityScripts.cs` | Records which local scripts came from the community catalog so update checks can compare shas |
+| `Classes/AppVersion.cs` | Resolves the running PaletteShell version and checks a script's version range |
 | `Classes/RecycleBin.cs` | Sends a deleted script to the Windows Recycle Bin via `SHFileOperation` |
 | `Classes/EditorLauncher.cs` | Opens a script in the preferred editor setting, `$VISUAL`/`$EDITOR`, or Notepad |
+| `Classes/PowerShellQuoting.cs` | Quotes/escapes form values passed to the script (unless `[AllowExpression()]`) |
+| `Classes/Log.cs` | Lightweight diagnostic logging |
 | `Classes/PaletteShellSettingsManager.cs` | Backs the Settings page (scripts folder, default host, default timeout, preferred editor) and persists it to `settings.json` |
 | `Pages/ScriptsFolderSetupPage.cs`, `Forms/ScriptsFolderSetupForm.cs` | First-run (and re-run) prompt that collects the scripts folder |
 | `Commands/RunScriptCommand.cs` | Runs a parameterless script and handles output/clipboard/toast/confirmation |
@@ -404,6 +413,9 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `Commands/DeleteScriptCommand.cs` | Deletes a script to the Recycle Bin after a confirmation dialog |
 | `Commands/RevealInExplorerCommand.cs` | Opens File Explorer with the script file selected |
 | `Commands/OpenInEditorCommand.cs`, `OpenFolderCommand.cs`, `OpenLinkCommand.cs`, `ReloadPageCommand.cs` | Built-in and per-item commands |
+| `Commands/LaunchCommunityStoreCommand.cs` | "Browse community scripts" — opens the Script Manager, falling back to the GitHub repo |
+| `Commands/IncompatibleScriptCommand.cs`, `ElevationIncompatibleCommand.cs` | Shown in place of running when a script's version range or elevation/output-mode combo can't run |
+| `Commands/ScriptFailurePresenter.cs` | Surfaces a failed run (`ScriptFailureReport`) to the user |
 | `Pages/ScriptParameterFormPage.cs`, `Forms/ScriptParameterForm.cs` | Auto-generated input form for parameterized scripts |
 | `Pages/ScriptMarkdownPage.cs` | Runs a script and renders its output as Markdown |
 | `Pages/ScriptListPage.cs` | Runs a script and turns its stdout into a searchable, pickable list |
