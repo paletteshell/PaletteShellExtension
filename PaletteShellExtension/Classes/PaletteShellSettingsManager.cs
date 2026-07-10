@@ -21,6 +21,13 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
     // [ScriptTimeout], and the user hasn't overridden the default (or entered garbage).
     private const int FallbackTimeoutMs = 30000;
 
+    // Retention window for the %TEMP%\PaletteShell dir (failure reports + File-mode output).
+    // Defaulted/clamped the same way the timeout is, so a typo'd setting can't disable
+    // cleanup outright (0) or set an absurd window.
+    private const int DefaultCleanupDays = 7;
+    private const int MinCleanupDays = 1;
+    private const int MaxCleanupDays = 365;
+
     public static PaletteShellSettingsManager Instance { get; } = new();
 
     private readonly ChoiceSetSetting _defaultHost = new(
@@ -51,6 +58,18 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
         "Scripts folder",
         "Folder PaletteShell scans for .ps1 scripts. Changing this doesn't move existing scripts or pins — run \"Reload scripts\" afterward to pick it up.",
         string.Empty);
+
+    private readonly ToggleSetting _cleanupTempEnabled = new(
+        "cleanupTempEnabled",
+        "Auto-clean temp reports/output",
+        "Periodically delete old failure reports and \"File\" output-mode results from the temp folder (%TEMP%\\PaletteShell). These can contain script output and arguments.",
+        true);
+
+    private readonly TextSetting _cleanupTempDays = new(
+        "cleanupTempDays",
+        "Delete temp files older than (days)",
+        "How long to keep files in %TEMP%\\PaletteShell before auto-clean removes them.",
+        DefaultCleanupDays.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>The configured default host: <c>"auto"</c>, <c>"pwsh"</c>, or <c>"powershell"</c>.</summary>
     public string DefaultHost => _defaultHost.Value ?? HostAuto;
@@ -87,6 +106,36 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
     public string? PreferredEditor =>
         string.IsNullOrWhiteSpace(_preferredEditor.Value) ? null : _preferredEditor.Value.Trim();
 
+    /// <summary>Whether the %TEMP%\PaletteShell dir is auto-cleaned when a new report/output is written.</summary>
+    public bool CleanupTempEnabled => _cleanupTempEnabled.Value;
+
+    /// <summary>Retention window (days) for %TEMP%\PaletteShell, clamped like
+    /// <see cref="DefaultTimeoutMs"/> so a typo can't disable cleanup (0) or set an absurd window.</summary>
+    public int CleanupRetentionDays
+    {
+        get
+        {
+            if (!int.TryParse(_cleanupTempDays.Value, out var days) || days <= 0)
+            {
+                return DefaultCleanupDays;
+            }
+
+            if (days < MinCleanupDays)
+            {
+                Log.Warn($"Clamping cleanup retention setting ({days}) to the {MinCleanupDays}-day minimum");
+                return MinCleanupDays;
+            }
+
+            if (days > MaxCleanupDays)
+            {
+                Log.Warn($"Clamping cleanup retention setting ({days}) to the {MaxCleanupDays}-day maximum");
+                return MaxCleanupDays;
+            }
+
+            return days;
+        }
+    }
+
     /// <summary>The configured scripts folder, or null when the user hasn't chosen one yet.</summary>
     public string? ScriptsFolder
     {
@@ -119,6 +168,8 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
         Settings.Add(_defaultTimeoutMs);
         Settings.Add(_preferredEditor);
         Settings.Add(_scriptsFolder);
+        Settings.Add(_cleanupTempEnabled);
+        Settings.Add(_cleanupTempDays);
 
         try
         {

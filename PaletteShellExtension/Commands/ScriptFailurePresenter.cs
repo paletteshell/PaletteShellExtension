@@ -52,6 +52,7 @@ internal static class ScriptFailurePresenter
             Icon = new IconInfo(""), // Warning
             MoreCommands =
             [
+                new CommandContextItem(new OpenFolderCommand(EditorLauncher.OutputDirectory, "Open report folder")),
                 new CommandContextItem(new OpenFolderCommand(Log.LogDirectory, "Open log folder")),
             ],
         };

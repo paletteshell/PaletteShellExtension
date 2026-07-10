@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace PaletteShellExtension.Classes;
 
@@ -13,6 +14,21 @@ namespace PaletteShellExtension.Classes;
 /// </summary>
 internal static class ScriptFailureReport
 {
+    // Matches a PowerShell switch whose name contains a secret-ish keyword, plus the token
+    // that follows it — a single-quoted value ('' = escaped quote) or a bare token (numbers,
+    // bools, expressions). The value is masked so tokens/passwords/keys don't land in the
+    // plaintext report. `key` is deliberately broad (also matches -Keyword etc.): over-
+    // redaction is harmless here, under-redaction leaks secrets.
+    private static readonly Regex SensitiveArg = new(
+        @"-(\w*(?:password|token|secret|credential|apikey|pwd|key)\w*)\s+('(?:[^']|'')*'|\S+)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>Masks values of arguments whose switch name looks like a secret
+    /// (password/token/secret/credential/apikey/pwd/key), leaving the switch name intact:
+    /// <c>-Token 'abc'</c> becomes <c>-Token '***'</c>.</summary>
+    internal static string RedactArgs(string args) =>
+        SensitiveArg.Replace(args, "-$1 '***'");
+
     /// <summary>One-line outcome, e.g. "exited with code 1", "timed out and was killed",
     /// "failed to start". Shared by the report header and the failure dialog title.</summary>
     public static string DescribeOutcome(ScriptRunner.ScriptResult? result)
@@ -41,7 +57,7 @@ internal static class ScriptFailureReport
         sb.AppendLine();
         sb.AppendLine(culture, $"Script:   {scriptPath}");
         sb.AppendLine(culture, $"Shell:    {ScriptRunner.ResolveShell(host)}");
-        sb.AppendLine(culture, $"Args:     {(string.IsNullOrWhiteSpace(args) ? "(none)" : args)}");
+        sb.AppendLine(culture, $"Args:     {(string.IsNullOrWhiteSpace(args) ? "(none)" : RedactArgs(args))}");
         sb.AppendLine(culture, $"Outcome:  {DescribeOutcome(result)}");
         if (result?.DurationMs is { } duration)
         {
@@ -55,6 +71,7 @@ internal static class ScriptFailureReport
         sb.AppendLine(ContentOrPlaceholder(result?.StandardOutput));
         sb.AppendLine();
         sb.AppendLine(culture, $"Logs: {Log.LogDirectory}");
+        sb.AppendLine(culture, $"This report: {EditorLauncher.OutputDirectory} (auto-cleaned when enabled in settings)");
 
         return sb.ToString();
     }

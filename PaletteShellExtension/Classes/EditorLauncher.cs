@@ -16,6 +16,10 @@ internal static class EditorLauncher
     // reliably detect UTF-8 instead of guessing at all-non-Latin content.
     private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true);
 
+    /// <summary>Temp folder holding failure reports and "File" output-mode results. Exposed so
+    /// the palette can offer an "Open report folder" command and so cleanup has one source of truth.</summary>
+    internal static string OutputDirectory => Path.Combine(Path.GetTempPath(), "PaletteShell");
+
     public static void Open(string path)
     {
         var editor = PaletteShellSettingsManager.Instance.PreferredEditor
@@ -42,8 +46,9 @@ internal static class EditorLauncher
     /// </summary>
     public static string OpenContent(string content, string? extension = null, string? baseName = null)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "PaletteShell");
+        var dir = OutputDirectory;
         Directory.CreateDirectory(dir);
+        PruneOld(dir);
 
         var name = Sanitize(baseName) ?? "output";
         var fileName = $"{name}-{DateTime.Now:yyyyMMdd-HHmmss}{NormalizeExtension(extension)}";
@@ -52,6 +57,44 @@ internal static class EditorLauncher
         File.WriteAllText(path, content ?? "", Utf8WithBom);
         Open(path);
         return path;
+    }
+
+    /// <summary>
+    /// Deletes files in the temp folder older than the configured retention window — these
+    /// reports/outputs can carry sensitive script data, so they shouldn't accumulate forever.
+    /// Gated by the user's cleanup setting and entirely best-effort: neither a disabled
+    /// setting nor a locked file may break the write that triggered it.
+    /// </summary>
+    private static void PruneOld(string dir)
+    {
+        try
+        {
+            var settings = PaletteShellSettingsManager.Instance;
+            if (!settings.CleanupTempEnabled)
+            {
+                return;
+            }
+
+            var cutoff = DateTime.Now.AddDays(-settings.CleanupRetentionDays);
+            foreach (var file in Directory.GetFiles(dir))
+            {
+                try
+                {
+                    if (File.GetLastWriteTime(file) < cutoff)
+                    {
+                        File.Delete(file);
+                    }
+                }
+                catch (Exception)
+                {
+                    // A locked or already-removed file just gets picked up next time.
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Cleanup is a convenience; never let it break opening the report/output.
+        }
     }
 
     private static string NormalizeExtension(string? extension)
