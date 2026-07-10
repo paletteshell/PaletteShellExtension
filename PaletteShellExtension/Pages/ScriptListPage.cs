@@ -201,7 +201,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
         }
 
         // Single-quote the literal so paths and spaces reach the script intact.
-        return $"-{_queryParam} '{query.Replace("'", "''")}'";
+        return $"-{_queryParam} {PowerShellQuoting.SingleQuote(query)}";
     }
 
     private static IListItem[] Filter(IListItem[] items, string? search)

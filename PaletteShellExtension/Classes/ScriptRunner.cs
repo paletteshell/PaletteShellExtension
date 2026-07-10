@@ -156,7 +156,7 @@ internal static partial class ScriptRunner
             {
                 continue;
             }
-            quoted.Add("'" + name.Replace("'", "''") + "'");
+            quoted.Add(PowerShellQuoting.SingleQuote(name));
         }
 
         if (quoted.Count == 0)
@@ -193,7 +193,7 @@ internal static partial class ScriptRunner
         // Pre-load the module so attributes can be resolved at parse time
         var scriptDir = Path.GetDirectoryName(scriptPath) ?? "";
         var modulePath = Path.Combine(scriptDir, "PaletteScriptAttributes.psm1");
-        var usingModule = File.Exists(modulePath) ? $"using module '{modulePath}'; " : "";
+        var usingModule = File.Exists(modulePath) ? $"using module {PowerShellQuoting.SingleQuote(modulePath)}; " : "";
 
         // Declared [RequiresModule(...)] dependencies are checked before the script runs, so a
         // missing module fails with an actionable Install-Module hint instead of the script's
@@ -207,7 +207,7 @@ internal static partial class ScriptRunner
         // stream (6) to stdout to capture Write-Host. `args` is already single-quoted per
         // value by the caller, so it's interpolated into this single command string rather
         // than re-split into ArgumentList entries (which would break values with spaces).
-        var commandString = $"{usingModule}{moduleCheck}[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . '{scriptPath}' {args} 6>&1";
+        var commandString = $"{usingModule}{moduleCheck}[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . {PowerShellQuoting.SingleQuote(scriptPath)} {args} 6>&1";
         psi.ArgumentList.Add(commandString);
 
         if (!string.IsNullOrWhiteSpace(cwd))

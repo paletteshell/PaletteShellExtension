@@ -418,6 +418,6 @@ internal sealed class ScriptParameterForm : FormContent
         if (param.AllowExpression)
             return value;
 
-        return "'" + value.Replace("'", "''") + "'";
+        return PowerShellQuoting.SingleQuote(value);
     }
 }
