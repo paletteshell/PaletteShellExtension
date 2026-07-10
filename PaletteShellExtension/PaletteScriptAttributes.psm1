@@ -66,6 +66,15 @@ class ScriptVersionAttribute : Attribute {
     ScriptVersionAttribute([string]$version) { $this.Version = $version }
 }
 
+# Requires a PowerShell module be installed to run this script. Repeat the attribute for
+# multiple modules, e.g. [RequiresModule('ImportExcel')] [RequiresModule('Az.Accounts')].
+# When the script is run, PaletteShell checks each module and fails with an Install-Module
+# hint if it isn't available.
+class RequiresModuleAttribute : Attribute {
+    [string]$Name
+    RequiresModuleAttribute([string]$name) { $this.Name = $name }
+}
+
 # Minimum PaletteShell app version (SemVer) required to run this script. PaletteShell hides
 # the script (with an explanatory row) instead of running it when the installed app is older.
 class RequiresPaletteShellMinimumAttribute : Attribute {

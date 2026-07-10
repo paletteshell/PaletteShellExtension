@@ -109,7 +109,7 @@ Whether PaletteShell waits for the script depends on its output mode and timeout
 | `[ScriptOutput('Open')]` | The first non-empty output line is opened as a URL, file, or folder path. |
 | `[ScriptOutput('File')]` | Captured output is written to a temp file and opened in your editor. |
 | `[ConfirmBeforeRun('msg')]` | Selecting the script prompts a yes/no dialog before it runs. |
-| `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode. |
+| `[RequiresElevation()]` / `#Requires -RunAsAdministrator` | The process is launched elevated (`runas`); output capture is unavailable in this mode, so elevation is only compatible with `[ScriptOutput('None')]`. Combined with any other output mode the script is shown as an incompatible row instead of running. |
 
 ### Cross-platform clipboard
 

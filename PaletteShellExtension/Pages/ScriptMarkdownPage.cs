@@ -80,7 +80,8 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
                 cwd: _cwd,
                 env: _env,
                 requiresAdmin: false,
-                timeoutMs: timeout);
+                timeoutMs: timeout,
+                requiredModules: _manifest.RequiredModules);
 
             _content.Body = FormatResult(result);
         }

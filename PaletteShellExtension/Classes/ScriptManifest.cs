@@ -31,6 +31,11 @@ public sealed class ScriptManifest
     // is the correct default here.
     public string? MaxVersion { get; set; }
 
+    // Modules the script needs installed, from one or more [RequiresModule('Name')] attributes.
+    // Checked at run time (a preflight in the PowerShell command): a missing module fails the
+    // run with an Install-Module hint rather than the script's own cryptic "term not recognized".
+    public List<string> RequiredModules { get; set; } = [];
+
     public bool? RequiresAdmin { get; set; }
 
     // When set, running the script first prompts a confirmation dialog carrying this

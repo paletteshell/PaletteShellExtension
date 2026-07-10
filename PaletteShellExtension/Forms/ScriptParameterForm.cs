@@ -192,6 +192,22 @@ internal sealed class ScriptParameterForm : FormContent
     {
         try
         {
+            // Elevated scripts can't capture output, so the routing gate only lets an elevated
+            // script reach here when its output is None. Launch it elevated fire-and-forget
+            // (runas honors ArgumentList/args) — there's nothing to wait for or surface.
+            if (ScriptElevation.RequiresElevation(_manifest))
+            {
+                ScriptRunner.RunScript(
+                    scriptPath: _scriptPath,
+                    args: argsLine,
+                    host: _host,
+                    cwd: _cwd,
+                    env: _env,
+                    requiresAdmin: true,
+                    requiredModules: _manifest.RequiredModules);
+                return CommandResult.ShowToast("Script completed");
+            }
+
             // Run script and wait for completion
             var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
             var result = ScriptRunner.RunScriptAndWait(
@@ -201,7 +217,8 @@ internal sealed class ScriptParameterForm : FormContent
                 cwd: _cwd,
                 env: _env,
                 requiresAdmin: false,
-                timeoutMs: timeout);
+                timeoutMs: timeout,
+                requiredModules: _manifest.RequiredModules);
 
             // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
             // "View details" opens the full failure report — a toast is too small and too

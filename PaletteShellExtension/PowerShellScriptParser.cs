@@ -363,6 +363,9 @@ internal static partial class PowerShellScriptParser
                 case "ScriptEnv" when values.Count >= 2:
                     manifest.Env[values[0]] = values[1];
                     break;
+                case "RequiresModule" when values.Count >= 1 && !string.IsNullOrWhiteSpace(values[0]):
+                    manifest.RequiredModules.Add(values[0]);
+                    break;
             }
         }
     }
@@ -545,7 +548,7 @@ internal static partial class PowerShellScriptParser
         "PSDefaultValue", "ArgumentCompleter",
         "ScriptHost", "ScriptCwd", "RequiresElevation", "ConfirmBeforeRun", "ScriptTimeout",
         "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv", "ScriptVersion",
-        "RequiresPaletteShellMinimum", "RequiresPaletteShellMaximum"
+        "RequiresModule", "RequiresPaletteShellMinimum", "RequiresPaletteShellMaximum"
     };
 
     /// <summary>Removes <c>&lt;# ... #&gt;</c> blocks and whole-line <c>#</c> comments.</summary>

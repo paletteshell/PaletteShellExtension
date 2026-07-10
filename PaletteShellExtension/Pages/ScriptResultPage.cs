@@ -94,7 +94,8 @@ internal sealed partial class ScriptResultPage : ListPage
                 cwd: _cwd,
                 env: _env,
                 requiresAdmin: false,
-                timeoutMs: timeout);
+                timeoutMs: timeout,
+                requiredModules: _manifest.RequiredModules);
 
             _items = BuildItems(result);
         }

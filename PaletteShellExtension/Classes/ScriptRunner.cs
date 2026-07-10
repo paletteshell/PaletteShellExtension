@@ -136,6 +136,41 @@ internal static partial class ScriptRunner
         return false;
     }
 
+    /// <summary>
+    /// Builds a PowerShell preflight that fails the run (exit 1) with an Install-Module hint
+    /// for the first required module that isn't available, or an empty string when nothing is
+    /// required. Names are embedded as single-quoted literals with quotes doubled, so an odd
+    /// module name can't break out of the string or inject commands.
+    /// </summary>
+    private static string BuildModuleCheck(IReadOnlyList<string>? requiredModules)
+    {
+        if (requiredModules is null || requiredModules.Count == 0)
+        {
+            return "";
+        }
+
+        var quoted = new List<string>(requiredModules.Count);
+        foreach (var name in requiredModules)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+            quoted.Add("'" + name.Replace("'", "''") + "'");
+        }
+
+        if (quoted.Count == 0)
+        {
+            return "";
+        }
+
+        var list = string.Join(",", quoted);
+        return "foreach ($__psRequired in @(" + list + ")) { " +
+               "if (-not (Get-Module -ListAvailable -Name $__psRequired)) { " +
+               "Write-Error \"Missing required module '$__psRequired'. Install it with:  Install-Module -Name $__psRequired -Scope CurrentUser\"; " +
+               "exit 1 } }; ";
+    }
+
     public static ProcessStartInfo BuildProcessStartInfo(
         string scriptPath,
         string args,
@@ -143,7 +178,8 @@ internal static partial class ScriptRunner
         string? cwd,
         Dictionary<string, string>? env = null,
         bool requiresAdmin = false,
-        bool captureOutput = false)
+        bool captureOutput = false,
+        IReadOnlyList<string>? requiredModules = null)
     {
         var shell = ResolveShell(host);
         var psi = new ProcessStartInfo(shell);
@@ -159,14 +195,19 @@ internal static partial class ScriptRunner
         var modulePath = Path.Combine(scriptDir, "PaletteScriptAttributes.psm1");
         var usingModule = File.Exists(modulePath) ? $"using module '{modulePath}'; " : "";
 
+        // Declared [RequiresModule(...)] dependencies are checked before the script runs, so a
+        // missing module fails with an actionable Install-Module hint instead of the script's
+        // own cryptic "term not recognized" error. Uses PowerShell's own module resolution.
+        var moduleCheck = BuildModuleCheck(requiredModules);
+
         psi.ArgumentList.Add("-Command");
-        // Import the module when present (the `using` statement must come first), force
-        // UTF-8 console output so captured stdout isn't mangled, then dot-source the script
-        // with args. Always redirect the information stream (6) to stdout to capture
-        // Write-Host. `args` is already single-quoted per value by the caller, so it's
-        // interpolated into this single command string rather than re-split into
-        // ArgumentList entries (which would break values containing spaces).
-        var commandString = $"{usingModule}[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . '{scriptPath}' {args} 6>&1";
+        // Import the module when present (the `using` statement must come first), run any
+        // required-module preflight, force UTF-8 console output so captured stdout isn't
+        // mangled, then dot-source the script with args. Always redirect the information
+        // stream (6) to stdout to capture Write-Host. `args` is already single-quoted per
+        // value by the caller, so it's interpolated into this single command string rather
+        // than re-split into ArgumentList entries (which would break values with spaces).
+        var commandString = $"{usingModule}{moduleCheck}[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; . '{scriptPath}' {args} 6>&1";
         psi.ArgumentList.Add(commandString);
 
         if (!string.IsNullOrWhiteSpace(cwd))
@@ -212,11 +253,13 @@ internal static partial class ScriptRunner
         string args,
         string host,
         string? cwd,
-        Dictionary<string, string>? env = null)
+        Dictionary<string, string>? env = null,
+        bool requiresAdmin = false,
+        IReadOnlyList<string>? requiredModules = null)
     {
         try
         {
-            var psi = BuildProcessStartInfo(scriptPath, args, host, cwd, env);
+            var psi = BuildProcessStartInfo(scriptPath, args, host, cwd, env, requiresAdmin: requiresAdmin, requiredModules: requiredModules);
             // Fire-and-forget: dispose the handle (this does not stop the child) so we
             // don't leak the Process object the caller never uses.
             using var proc = Process.Start(psi);
@@ -244,7 +287,8 @@ internal static partial class ScriptRunner
         Dictionary<string, string>? env = null,
         bool requiresAdmin = false,
         int? timeoutMs = null,
-        bool reportProgress = true)
+        bool reportProgress = true,
+        IReadOnlyList<string>? requiredModules = null)
     {
         Process? proc = null;
 
@@ -263,7 +307,8 @@ internal static partial class ScriptRunner
                 cwd: cwd,
                 env: env,
                 requiresAdmin: requiresAdmin,
-                captureOutput: !requiresAdmin);
+                captureOutput: !requiresAdmin,
+                requiredModules: requiredModules);
 
             proc = Process.Start(psi);
 
@@ -346,7 +391,8 @@ internal static partial class ScriptRunner
         Dictionary<string, string>? env = null,
         bool requiresAdmin = false,
         int? timeoutMs = null,
-        bool reportProgress = true)
+        bool reportProgress = true,
+        IReadOnlyList<string>? requiredModules = null)
     {
         Process? proc = null;
 
@@ -380,7 +426,8 @@ internal static partial class ScriptRunner
                 cwd: cwd,
                 env: env,
                 requiresAdmin: requiresAdmin,
-                captureOutput: !requiresAdmin);
+                captureOutput: !requiresAdmin,
+                requiredModules: requiredModules);
 
             proc = Process.Start(psi);
 

@@ -64,7 +64,9 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
                 args: "",
                 host: host,
                 cwd: cwd,
-                env: expandedEnv);
+                env: expandedEnv,
+                requiresAdmin: wantsAdmin,
+                requiredModules: _manifest.RequiredModules);
             return CommandResult.ShowToast("Script completed");
         }
 
@@ -77,7 +79,8 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
             cwd: cwd,
             env: expandedEnv,
             requiresAdmin: wantsAdmin,
-            timeoutMs: timeout ?? PaletteShellSettingsManager.Instance.DefaultTimeoutMs);
+            timeoutMs: timeout ?? PaletteShellSettingsManager.Instance.DefaultTimeoutMs,
+            requiredModules: _manifest.RequiredModules);
 
         // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
         // "View details" opens the full failure report — a toast is too small and too

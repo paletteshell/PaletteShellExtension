@@ -419,6 +419,22 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     return;
                 }
 
+                // Elevation can't capture output, so an elevated script declared with any
+                // capturing output mode is impossible. Block it with a warning row (rather than
+                // let a route run it unelevated) — this one gate covers every route below.
+                if (manifest is not null && ScriptElevation.IsElevatedOutputIncompatible(manifest))
+                {
+                    var elevationPinned = pins.IsPinned(path);
+                    scriptResults[i] = (elevationPinned, title, new ListItem(new ElevationIncompatibleCommand())
+                    {
+                        Title = title,
+                        Subtitle = ScriptElevation.IncompatibleReason(),
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                    return;
+                }
+
                 var wantsMarkdown = string.Equals(manifest?.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
                 var wantsList = string.Equals(manifest?.Output, "List", StringComparison.OrdinalIgnoreCase);
                 var wantsResult = string.Equals(manifest?.Output, "Result", StringComparison.OrdinalIgnoreCase);

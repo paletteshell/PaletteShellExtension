@@ -74,7 +74,8 @@ Defined in `PaletteScriptAttributes.psm1`. Only these are recognized; anything e
 | `[ScriptOutput('None')]` | How stdout is handled (see [Output modes](#output-modes)) |
 | `[ScriptTimeout(30000)]` | Timeout in **milliseconds**; also forces wait-and-capture |
 | `[ScriptEnv('VAR', 'value')]` | Set an environment variable; repeat the attribute for more than one |
-| `[RequiresElevation()]` | Run elevated (admin). Equivalent to `#Requires -RunAsAdministrator`. Output capture is unavailable when elevated. |
+| `[RequiresModule('ImportExcel')]` | PowerShell module the script needs installed; repeat the attribute for more than one. Checked at run time — a missing module fails the run with an `Install-Module -Name … -Scope CurrentUser` hint instead of the script's own cryptic error |
+| `[RequiresElevation()]` | Run elevated (admin). Equivalent to `#Requires -RunAsAdministrator`. Output capture is unavailable when elevated, so elevation is only compatible with `[ScriptOutput('None')]` — any other output mode makes the script an incompatible row instead of running. |
 | `[ConfirmBeforeRun('message')]` | Show a yes/no dialog with `message` before running. Pair with `[RequiresElevation()]` for destructive scripts. |
 
 ### Path tokens

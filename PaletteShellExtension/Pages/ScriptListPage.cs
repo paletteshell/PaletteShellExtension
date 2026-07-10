@@ -164,7 +164,8 @@ internal sealed partial class ScriptListPage : DynamicListPage
                 cwd: _cwd,
                 env: _env,
                 requiresAdmin: false,
-                timeoutMs: timeout);
+                timeoutMs: timeout,
+                requiredModules: _manifest.RequiredModules);
 
             if (cancellationToken.IsCancellationRequested)
             {
