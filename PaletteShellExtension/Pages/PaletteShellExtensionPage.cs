@@ -149,19 +149,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             // instead of paying a second stat per script (noticeable on synced/network folders).
             var discovered = new DirectoryInfo(rootDirectory).EnumerateFiles("*.ps1", SearchOption.TopDirectoryOnly).ToList();
 
-            // Backfill a [ScriptVersion('1.0.0')] into any script that declares no version.
-            // Idempotent and best-effort (see ScriptVersionStamper), so an already-stamped folder
-            // just pays a cheap read per file. Refresh the FileInfo of anything actually rewritten
-            // so its size/write-time - which the manifest cache keys on - reflects the new content.
-            foreach (var file in discovered)
-            {
-                if (ScriptVersionStamper.TryStamp(file.FullName))
-                {
-                    file.Refresh();
-                }
-            }
-
-            _files = [.. discovered];
+                        _files = [.. discovered];
             PruneManifestCache(_files.Select(f => f.FullName));
             _folderError = null;
         }
