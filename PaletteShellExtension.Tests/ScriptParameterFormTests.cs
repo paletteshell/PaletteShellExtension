@@ -17,6 +17,14 @@ public class ScriptParameterFormTests
         Parameters = [new ScriptParameter { Name = "Name", Type = "string", Required = true, Label = label }]
     };
 
+    // A minimal execution plan for the early-exit paths, which never reach script execution.
+    private static ScriptExecutionPlan MinimalPlan() => new()
+    {
+        ScriptPath = ScriptPath,
+        Host = "pwsh",
+        Env = new(),
+    };
+
     // ----- GetMissingRequiredFields (pure logic, no script execution) -----------------------
 
     [Fact]
@@ -83,7 +91,7 @@ public class ScriptParameterFormTests
     [Fact]
     public void SubmitForm_MissingRequiredField_KeepsFormOpenWithToast()
     {
-        var form = new ScriptParameterForm(ScriptPath, ManifestWithRequiredName());
+        var form = new ScriptParameterForm(ScriptPath, ManifestWithRequiredName(), MinimalPlan());
 
         var result = form.SubmitForm("""{"Name":""}""", """{"verb":"run"}""");
 
@@ -97,7 +105,7 @@ public class ScriptParameterFormTests
     [Fact]
     public void SubmitForm_Cancel_Dismisses()
     {
-        var form = new ScriptParameterForm(ScriptPath, ManifestWithRequiredName());
+        var form = new ScriptParameterForm(ScriptPath, ManifestWithRequiredName(), MinimalPlan());
 
         var result = form.SubmitForm("""{"Name":""}""", """{"verb":"cancel"}""");
 

@@ -21,9 +21,7 @@ internal sealed partial class ScriptResultPage : ListPage
 {
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
 
     private IListItem[] _items = [];
     private bool _started;
@@ -35,15 +33,11 @@ internal sealed partial class ScriptResultPage : ListPage
     public ScriptResultPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null)
+        ScriptExecutionPlan plan)
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
         Name = "Run";
@@ -82,20 +76,10 @@ internal sealed partial class ScriptResultPage : ListPage
     {
         try
         {
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-
-            // Elevated scripts can't have their output captured, so Result mode always runs
-            // unelevated — there'd be no value to show otherwise. Awaited rather than
-            // blocked on so the script's run time doesn't pin a threadpool thread.
-            var result = await ScriptRunner.RunScriptAndWaitAsync(
-                scriptPath: _scriptPath,
-                args: "",
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout,
-                requiredModules: _manifest.RequiredModules);
+            // Elevated scripts can't have their output captured, so an elevated script never
+            // reaches Result mode (the compatibility gate blocks it) — the plan's RequiresAdmin is
+            // false here. Awaited rather than blocked on so the run doesn't pin a threadpool thread.
+            var result = await ScriptExecutionService.RunAsync(_plan);
 
             _items = BuildItems(result);
         }
@@ -116,7 +100,7 @@ internal sealed partial class ScriptResultPage : ListPage
         // Failures get an actionable row (Enter opens the full failure report) instead of
         // an inert message, so the user can see the whole error rather than a summary.
         if (result is null || result.TimedOut || result.ExitCode != 0)
-            return [ScriptFailurePresenter.ToListItem(_scriptPath, _host, "", result)];
+            return [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, "", result)];
 
         var value = result.StandardOutput?.Trim();
         if (string.IsNullOrEmpty(value))

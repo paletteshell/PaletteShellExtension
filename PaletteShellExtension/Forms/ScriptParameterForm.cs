@@ -13,9 +13,7 @@ internal sealed class ScriptParameterForm : FormContent
 {
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
     private readonly Action<string>? _onMarkdown;
     private readonly Action? _onRunStarted;
     private readonly Action? _onRunFinished;
@@ -23,9 +21,7 @@ internal sealed class ScriptParameterForm : FormContent
     public ScriptParameterForm(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null,
+        ScriptExecutionPlan plan,
         Action<string>? onMarkdown = null,
         Action? onRunStarted = null,
         Action? onRunFinished = null)
@@ -33,9 +29,7 @@ internal sealed class ScriptParameterForm : FormContent
 
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
         _onMarkdown = onMarkdown;
         _onRunStarted = onRunStarted;
         _onRunFinished = onRunFinished;
@@ -71,21 +65,8 @@ internal sealed class ScriptParameterForm : FormContent
                 });
             }
 
-            // Build argument list from form values
-            var args = new List<string>();
-            foreach (var param in _manifest.Parameters)
-            {
-                var value = obj[param.Name]?.ToString();
-
-                // Skip empty optional parameters
-                if (string.IsNullOrWhiteSpace(value) && param.Required != true)
-                    continue;
-
-                args.Add($"-{param.Name}");
-                args.Add(FormatArgValue(param, value ?? ""));
-            }
-
-            var argsLine = string.Join(" ", args);
+            // Build argument line from form values (quoting centralized in ScriptArgumentBuilder).
+            var argsLine = ScriptArgumentBuilder.BuildFromForm(_manifest.Parameters, obj);
 
             // Markdown output renders in place on this page, so run it asynchronously and show a
             // "Running…" spinner while it works — a slow script (e.g. an event-log query) no
@@ -132,15 +113,9 @@ internal sealed class ScriptParameterForm : FormContent
             string body;
             try
             {
-                var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-                var result = ScriptRunner.RunScriptAndWait(
-                    scriptPath: _scriptPath,
-                    args: argsLine,
-                    host: _host,
-                    cwd: _cwd,
-                    env: _env,
-                    requiresAdmin: false,
-                    timeoutMs: timeout);
+                // Markdown mode is never elevated (the compatibility gate blocks elevated +
+                // capturing output), so the plan's RequiresAdmin is false here.
+                var result = ScriptExecutionService.RunAndWait(_plan, argsLine);
 
                 body = FormatInPageResult(result);
             }
@@ -195,36 +170,20 @@ internal sealed class ScriptParameterForm : FormContent
             // Elevated scripts can't capture output, so the routing gate only lets an elevated
             // script reach here when its output is None. Launch it elevated fire-and-forget
             // (runas honors ArgumentList/args) — there's nothing to wait for or surface.
-            if (ScriptElevation.RequiresElevation(_manifest))
+            if (_plan.RequiresAdmin)
             {
-                ScriptRunner.RunScript(
-                    scriptPath: _scriptPath,
-                    args: argsLine,
-                    host: _host,
-                    cwd: _cwd,
-                    env: _env,
-                    requiresAdmin: true,
-                    requiredModules: _manifest.RequiredModules);
+                ScriptExecutionService.RunFireAndForget(_plan, argsLine);
                 return CommandResult.ShowToast("Script completed");
             }
 
             // Run script and wait for completion
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-            var result = ScriptRunner.RunScriptAndWait(
-                scriptPath: _scriptPath,
-                args: argsLine,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout,
-                requiredModules: _manifest.RequiredModules);
+            var result = ScriptExecutionService.RunAndWait(_plan, argsLine);
 
             // Failures (couldn't start, timed out, non-zero exit) surface as a dialog whose
             // "View details" opens the full failure report — a toast is too small and too
             // short-lived to explain what went wrong.
             if (result == null || result.TimedOut || result.ExitCode != 0)
-                return ScriptFailurePresenter.ToCommandResult(_scriptPath, _host, argsLine, result);
+                return ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, result);
 
             // Markdown output - render the result in place instead of a toast.
             var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
@@ -390,6 +349,7 @@ internal sealed class ScriptParameterForm : FormContent
 
     private static string BuildDataJson() => new JsonObject().ToJsonString();
 
+
     private static string? ParseVerb(string? data)
     {
         if (string.IsNullOrWhiteSpace(data))
@@ -404,20 +364,4 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    /// <summary>
-    /// Formats a form value as a PowerShell command-line argument. Booleans become
-    /// <c>$true</c>/<c>$false</c>; parameters marked <c>[AllowExpression]</c> are injected
-    /// verbatim so PowerShell evaluates them; everything else is a single-quoted literal so
-    /// <c>$</c>, <c>;</c>, backticks and quotes reach the script intact rather than being evaluated.
-    /// </summary>
-    private static string FormatArgValue(ScriptParameter param, string value)
-    {
-        if (param.Type == "bool")
-            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "$true" : "$false";
-
-        if (param.AllowExpression)
-            return value;
-
-        return PowerShellQuoting.SingleQuote(value);
-    }
 }

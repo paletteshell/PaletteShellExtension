@@ -387,13 +387,16 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var title = manifest?.Title ?? Path.GetFileNameWithoutExtension(path);
                 var subtitle = manifest?.Description ?? path;
 
-                if (manifest is not null && !AppVersion.IsCompatible(manifest.MinVersion, manifest.MaxVersion, out var requiredVersion, out var tooNew))
+                // One gate covers app-version range and the elevation/output-capture conflict for
+                // every route below: a blocked script gets a warning row instead of a runnable one.
+                var compat = ScriptCompatibility.Validate(manifest);
+                if (compat.Kind == ScriptCompatibilityKind.RequiresUpdate)
                 {
                     var incompatiblePinned = pins.IsPinned(path);
-                    var incompatibleSubtitle = tooNew
-                        ? $"⚠ Requires PaletteShell v{requiredVersion} or earlier — you have v{AppVersion.Current}"
-                        : $"⚠ Requires PaletteShell v{requiredVersion} or later — you have v{AppVersion.Current}";
-                    scriptResults[i] = (incompatiblePinned, title, new ListItem(new IncompatibleScriptCommand(requiredVersion!.ToString(), AppVersion.Current.ToString(), tooNew))
+                    var incompatibleSubtitle = compat.TooNew
+                        ? $"⚠ Requires PaletteShell v{compat.RequiredVersion} or earlier — you have v{AppVersion.Current}"
+                        : $"⚠ Requires PaletteShell v{compat.RequiredVersion} or later — you have v{AppVersion.Current}";
+                    scriptResults[i] = (incompatiblePinned, title, new ListItem(new IncompatibleScriptCommand(compat.RequiredVersion!, AppVersion.Current.ToString(), compat.TooNew))
                     {
                         Title = title,
                         Subtitle = incompatibleSubtitle,
@@ -403,10 +406,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     return;
                 }
 
-                // Elevation can't capture output, so an elevated script declared with any
-                // capturing output mode is impossible. Block it with a warning row (rather than
-                // let a route run it unelevated) — this one gate covers every route below.
-                if (manifest is not null && ScriptElevation.IsElevatedOutputIncompatible(manifest))
+                if (compat.Kind == ScriptCompatibilityKind.ElevationIncompatible)
                 {
                     var elevationPinned = pins.IsPinned(path);
                     scriptResults[i] = (elevationPinned, title, new ListItem(new ElevationIncompatibleCommand())
@@ -423,6 +423,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 var wantsList = string.Equals(manifest?.Output, "List", StringComparison.OrdinalIgnoreCase);
                 var wantsResult = string.Equals(manifest?.Output, "Result", StringComparison.OrdinalIgnoreCase);
 
+                // Resolve host/cwd/env/timeout/elevation once, here, so every route below shares
+                // the same execution decisions instead of each re-deriving them.
+                var plan = manifest is not null
+                    ? ScriptExecutionService.CreatePlan(manifest, path)
+                    : null;
+
                 ICommand command;
                 if (wantsList && manifest is not null)
                 {
@@ -430,56 +436,25 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     // stdout into a searchable, pickable list. If the script declares a
                     // parameter, that page feeds it the palette's search text (it acts as a
                     // live provider) rather than using the parameter form.
-                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
-
-                    command = new ScriptListPage(
-                        scriptPath: path,
-                        manifest: manifest,
-                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
-                        cwd: resolvedCwd,
-                        env: manifest.Env);
+                    command = new ScriptListPage(path, manifest, plan!);
                 }
                 else if (manifest?.Parameters is { Count: > 0 })
                 {
                     // Script has parameters - navigate to parameter form page
-                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
-
-                    var formPage = new ScriptParameterFormPage(
-                        scriptPath: path,
-                        manifest: manifest,
-                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
-                        cwd: resolvedCwd,
-                        env: manifest.Env
-                    );
-
-                    command = formPage;
+                    command = new ScriptParameterFormPage(path, manifest, plan!);
                 }
                 else if (wantsMarkdown && manifest is not null)
                 {
                     // No parameters, Markdown output - navigate to a page that runs
                     // the script and renders its stdout as Markdown.
-                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
-
-                    command = new ScriptMarkdownPage(
-                        scriptPath: path,
-                        manifest: manifest,
-                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
-                        cwd: resolvedCwd,
-                        env: manifest.Env);
+                    command = new ScriptMarkdownPage(path, manifest, plan!);
                 }
                 else if (wantsResult && manifest is not null)
                 {
                     // No parameters, Result output - navigate to a page that runs the script
                     // and shows its output as a single copyable result (Enter copies), the way
                     // a calculator shows an answer.
-                    var resolvedCwd = PowerShellScriptParser.ResolveCwd(manifest.Cwd, path);
-
-                    command = new ScriptResultPage(
-                        scriptPath: path,
-                        manifest: manifest,
-                        host: manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost,
-                        cwd: resolvedCwd,
-                        env: manifest.Env);
+                    command = new ScriptResultPage(path, manifest, plan!);
                 }
                 else
                 {

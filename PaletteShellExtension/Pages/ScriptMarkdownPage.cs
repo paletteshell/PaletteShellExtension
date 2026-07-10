@@ -12,11 +12,7 @@ namespace PaletteShellExtension.Pages;
 // Used when a script declares ScriptOutput("Markdown").
 internal sealed partial class ScriptMarkdownPage : ContentPage
 {
-    private readonly string _scriptPath;
-    private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
     private readonly string _args;
 
     private readonly MarkdownContent _content = new();
@@ -27,16 +23,10 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
     public ScriptMarkdownPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null,
+        ScriptExecutionPlan plan,
         string args = "")
     {
-        _scriptPath = scriptPath;
-        _manifest = manifest;
-        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
         _args = args;
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
@@ -68,20 +58,10 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
     {
         try
         {
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-
-            // Elevated scripts can't have their output captured, so Markdown mode
-            // always runs unelevated to be able to render the result. Awaited rather than
-            // blocked on so the script's run time doesn't pin a threadpool thread.
-            var result = await ScriptRunner.RunScriptAndWaitAsync(
-                scriptPath: _scriptPath,
-                args: _args,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout,
-                requiredModules: _manifest.RequiredModules);
+            // Elevated scripts can't have their output captured, so an elevated script never
+            // reaches Markdown mode (the compatibility gate blocks it) — the plan's RequiresAdmin
+            // is false here. Awaited rather than blocked on so the run doesn't pin a threadpool thread.
+            var result = await ScriptExecutionService.RunAsync(_plan, _args);
 
             _content.Body = FormatResult(result);
         }

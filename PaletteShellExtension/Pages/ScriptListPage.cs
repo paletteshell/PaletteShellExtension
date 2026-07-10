@@ -37,9 +37,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
 {
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
 
     // When set, the page feeds the palette's search text to the script as this parameter
     // and re-runs on change; when null the script runs once and search filters locally.
@@ -60,15 +58,11 @@ internal sealed partial class ScriptListPage : DynamicListPage
     public ScriptListPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null)
+        ScriptExecutionPlan plan)
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
         _queryParam = manifest.Parameters.FirstOrDefault()?.Name;
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
@@ -148,24 +142,14 @@ internal sealed partial class ScriptListPage : DynamicListPage
     {
         try
         {
-            var args = BuildArgs(query);
+            var args = _queryParam is null ? "" : ScriptArgumentBuilder.BuildQueryArg(_queryParam, query);
 
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-
-            // Elevated scripts can't have their output captured, so List mode always
-            // runs unelevated — there'd be nothing to list otherwise. Awaited rather than
-            // blocked on so a slow provider doesn't pin a threadpool thread per keystroke.
-            // The token deliberately isn't passed down: a superseded run's process finishes
-            // (or times out) on its own, matching the old version-counter behavior.
-            var result = await ScriptRunner.RunScriptAndWaitAsync(
-                scriptPath: _scriptPath,
-                args: args,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout,
-                requiredModules: _manifest.RequiredModules);
+            // Elevated scripts can't have their output captured, so an elevated script never
+            // reaches List mode (the compatibility gate blocks it) — the plan's RequiresAdmin is
+            // false here. Awaited rather than blocked on so a slow provider doesn't pin a
+            // threadpool thread per keystroke. The token deliberately isn't passed down: a
+            // superseded run's process finishes (or times out) on its own.
+            var result = await ScriptExecutionService.RunAsync(_plan, args);
 
             if (cancellationToken.IsCancellationRequested)
             {
@@ -191,19 +175,6 @@ internal sealed partial class ScriptListPage : DynamicListPage
         }
     }
 
-    /// <summary>Builds the command-line argument that passes the search text to the script's
-    /// query parameter. Empty text is omitted so the script's own default applies.</summary>
-    private string BuildArgs(string? query)
-    {
-        if (_queryParam is null || string.IsNullOrEmpty(query))
-        {
-            return "";
-        }
-
-        // Single-quote the literal so paths and spaces reach the script intact.
-        return $"-{_queryParam} {PowerShellQuoting.SingleQuote(query)}";
-    }
-
     private static IListItem[] Filter(IListItem[] items, string? search)
     {
         if (string.IsNullOrWhiteSpace(search))
@@ -221,7 +192,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
         // Failures get an actionable row (Enter opens the full failure report) instead of
         // an inert message, so the user can see the whole error rather than a summary.
         if (result is null || result.TimedOut || result.ExitCode != 0)
-            return [ScriptFailurePresenter.ToListItem(_scriptPath, _host, args, result)];
+            return [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, args, result)];
 
         var output = result.StandardOutput;
         if (string.IsNullOrWhiteSpace(output))
