@@ -13,6 +13,7 @@ using module .\PaletteScriptAttributes.psm1
 #>
 [ScriptHost('pwsh')]
 [ScriptGroup('System')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🧹')]
 [ScriptTimeout(60000)]
 [ScriptOutput('Toast')]

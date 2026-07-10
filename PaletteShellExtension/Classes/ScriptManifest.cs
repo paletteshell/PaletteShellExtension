@@ -13,6 +13,12 @@ public sealed class ScriptManifest
     public List<string> Tags { get; set; } = [];
     public string? IconGlyph { get; set; }
 
+    // Script-authored version from [ScriptVersion('x')] (recommended SemVer). Defaults to "1.0.0"
+    // when a script omits it (see PowerShellScriptParser) so every manifest stays comparable
+    // rather than making callers special-case a null. Lets tooling detect when a newer copy of a
+    // script is available.
+    public string? Version { get; set; }
+
     // Minimum PaletteShell app version (SemVer) required to run this script. A script that
     // omits [RequiresPaletteShellMinimum(...)] defaults to "0.0.6" (see PowerShellScriptParser)
     // rather than staying null, so this is only null when parsing raw content that skips that

@@ -358,15 +358,23 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
-    public void ScriptVersion_IsIgnored()
+    public void ScriptVersion_IsParsed()
     {
-        using var file = new TestScriptFile("[ScriptVersion('1.2.3')]\nparam()");
+        using var file = new TestScriptFile("[ScriptVersion('1.2.0')]\nparam()");
 
         var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
 
-        Assert.NotNull(manifest);
-        Assert.Equal("0.0.6", manifest!.MinVersion);
-        Assert.Null(manifest.MaxVersion);
+        Assert.Equal("1.2.0", manifest!.Version);
+    }
+
+    [Fact]
+    public void ScriptVersion_WhenOmitted_DefaultsTo1_0_0()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.0.0", manifest!.Version);
     }
 
     [Fact]

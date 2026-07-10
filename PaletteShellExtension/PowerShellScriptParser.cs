@@ -95,6 +95,11 @@ internal static partial class PowerShellScriptParser
         // Script-level [Script*] attributes live before the param keyword.
         ParseScriptAttributes(attributeZone, manifest);
 
+        // A script that predates [ScriptVersion(...)] (or simply omits it) is assumed to be
+        // at the baseline version rather than "no version" - keeps every manifest comparable
+        // instead of making callers special-case a null.
+        manifest.Version ??= "1.0.0";
+
         // A script that predates [RequiresPaletteShellMinimum(...)] (or simply omits it) is
         // assumed to require no more than 0.0.6 - the last PaletteShell version before
         // RequiresPaletteShellMinimum itself existed. 1.0.0 would be the wrong baseline here:
@@ -332,9 +337,8 @@ internal static partial class PowerShellScriptParser
                         .Where(t => t.Length > 0)
                         .ToList();
                     break;
-                case "ScriptVersion":
-                    // Deprecated script-authored version metadata is ignored for backward
-                    // compatibility with existing scripts that still declare it.
+                case "ScriptVersion" when values.Count >= 1:
+                    manifest.Version = values[0];
                     break;
                 case "RequiresPaletteShellMinimum" when values.Count >= 1:
                     manifest.MinVersion = values[0];
@@ -540,7 +544,7 @@ internal static partial class PowerShellScriptParser
         "AllowEmptyCollection", "CmdletBinding", "OutputType", "Alias", "SupportsWildcards",
         "PSDefaultValue", "ArgumentCompleter",
         "ScriptHost", "ScriptCwd", "RequiresElevation", "ConfirmBeforeRun", "ScriptTimeout",
-        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv",
+        "ScriptOutput", "ScriptIcon", "ScriptGroup", "ScriptTags", "ScriptEnv", "ScriptVersion",
         "RequiresPaletteShellMinimum", "RequiresPaletteShellMaximum"
     };
 

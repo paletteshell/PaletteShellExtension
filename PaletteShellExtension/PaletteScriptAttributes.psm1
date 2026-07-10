@@ -60,8 +60,7 @@ class ScriptTagsAttribute : Attribute {
     ScriptTagsAttribute([string]$tags) { $this.Tags = $tags }
 }
 
-# Deprecated no-op kept so existing scripts that still declare [ScriptVersion(...)] continue
-# to run. PaletteShell ignores this metadata.
+# Script version (recommended: SemVer, e.g. '1.0.0'). Lets tools detect when a newer copy is available.
 class ScriptVersionAttribute : Attribute {
     [string]$Version
     ScriptVersionAttribute([string]$version) { $this.Version = $version }

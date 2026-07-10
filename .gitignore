@@ -170,3 +170,4 @@ BenchmarkDotNet.Artifacts/
 !Directory.Build.rsp
 /PaletteShellExtension/bundle_mapping.txt
 signing/
+/PaletteShellExtension/*.msixbundle

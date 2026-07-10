@@ -12,6 +12,7 @@ using module .\PaletteScriptAttributes.psm1
 #>
 [ScriptHost('pwsh')]
 [ScriptGroup('Developer')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🌿')]
 [ScriptTimeout(15000)]
 [ScriptOutput('List')]

@@ -18,6 +18,11 @@
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
     <AppxPackageVersion>0.0.7.0</AppxPackageVersion>
 
+    <!-- Shared self-signed cert for sideload testing (CN matches Publisher). Store re-signs on
+         submission, so this is dev-only. Cert must live in CurrentUser\My on the build machine. -->
+    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <PackageCertificateThumbprint>655B3250FBBF0E38A4B98C8F44B7DD5E9A9DEC56</PackageCertificateThumbprint>
+
     <!-- Do not trim the packaged extension. The WinRT projection dependencies and the
          bundled TextCopy assembly use dynamic/reflection-heavy paths that are not fully
          trim-annotated, and TextCopy must remain intact for PowerShell script clipboard helpers. -->

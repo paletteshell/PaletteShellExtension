@@ -62,6 +62,10 @@ Scripts are ordered **pinned first, then alphabetically by their displayed title
 
 If a script fails to parse (e.g. a malformed `param()` block), it isn't dropped silently — it still appears with a **⚠ Couldn't load this script** subtitle and its context menu, so you can open it to fix or delete it.
 
+A script that declares `[RequiresPaletteShellMinimum(...)]` / `[RequiresPaletteShellMaximum(...)]` outside the installed app's version range also stays visible, but shows a **⚠ Requires an update** row (naming the version it needs) instead of running, so you know to update PaletteShell rather than seeing a broken script.
+
+Scripts are also **version-stamped on load**: any script that declares no `[ScriptVersion(...)]` gets `[ScriptVersion('1.0.0')]` backfilled into it (idempotent and best-effort — files it can't safely rewrite are left untouched), so every managed script carries a version tools can compare.
+
 > ℹ️ New scripts and edits are picked up only when you run **"Reload scripts"** — this is intentional, not a bug. Reloading shows a **"Reloaded N scripts"** toast so you know the rescan ran.
 
 ### Parsing the manifest
@@ -188,6 +192,10 @@ The agent reads `AGENTS.md`, produces a compliant script in the folder, and you 
 | `[ConfirmBeforeRun('message')]` | Prompt a yes/no confirmation (with `message`) before running |
 | `[ScriptTimeout(30000)]` | Timeout in milliseconds; also forces wait-and-capture. Omit it to use the [default timeout setting](#-settings) |
 | `[ScriptGroup('Category')]` | Group/category name for tooling such as the Script Manager catalog browser |
+| `[ScriptTags('foo,bar')]` | Comma-delimited free-form tags for tooling such as the Script Manager catalog browser |
+| `[ScriptVersion('1.0.0')]` | Script version (SemVer recommended) so tooling can detect when a newer copy is available. Scripts that omit it are stamped with `1.0.0` on load |
+| `[RequiresPaletteShellMinimum('1.2.0')]` | Minimum PaletteShell version required; older installs show a **"Requires an update"** row instead of running |
+| `[RequiresPaletteShellMaximum('2.0.0')]` | Maximum PaletteShell version supported; newer installs show a **"Requires an update"** row instead of running |
 | `[ScriptIcon('🚀')]` | Icon emoji or glyph shown in the palette |
 | `[ScriptOutput('None')]` | Output mode (see below) |
 | `[ScriptEnv('VAR', 'value')]` | Set an environment variable (repeat for multiple) |
@@ -385,6 +393,7 @@ dotnet build PaletteShellExtension/PaletteShellExtension.csproj
 | `Classes/ScriptOutputHandler.cs` | Maps captured output to a result per the script's output mode |
 | `Classes/ScriptStatus.cs` | Shows the "Running…" spinner in the status bar while a script runs |
 | `Classes/PinnedScripts.cs` | Tracks pinned scripts (persisted to `pinned.txt`) so they sort to the top |
+| `Classes/ScriptVersionStamper.cs` | Backfills `[ScriptVersion('1.0.0')]` into scripts that omit it during the folder scan (idempotent, best-effort) |
 | `Classes/RecycleBin.cs` | Sends a deleted script to the Windows Recycle Bin via `SHFileOperation` |
 | `Classes/EditorLauncher.cs` | Opens a script in the preferred editor setting, `$VISUAL`/`$EDITOR`, or Notepad |
 | `Classes/PaletteShellSettingsManager.cs` | Backs the Settings page (scripts folder, default host, default timeout, preferred editor) and persists it to `settings.json` |

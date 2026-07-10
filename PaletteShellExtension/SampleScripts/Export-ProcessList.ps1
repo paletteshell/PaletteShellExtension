@@ -8,6 +8,7 @@ using module .\PaletteScriptAttributes.psm1
 #>
 [ScriptHost('pwsh')]
 [ScriptGroup('Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('📊')]
 [ScriptTimeout(15000)]
 [ScriptOutput('File:csv')]
