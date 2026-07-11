@@ -44,9 +44,10 @@ When the extension is activated, `PaletteShellExtensionPage` does the following:
 4. Copies the `PaletteScriptAttributes.psm1` module, `TextCopy.dll`, and the `AGENTS.md` authoring spec next to the scripts so they're available at runtime.
 5. Enumerates every `*.ps1` file in the folder (top level only) and builds the command list.
 
-The list always begins with four built-in actions:
+The list always begins with these built-in actions:
 
 - **Open scripts folder** — opens your configured scripts folder in Explorer.
+- **Open log folder** — opens the diagnostic log folder for script runs and failures.
 - **Reload scripts** — re-scans the folder so new or changed scripts appear.
 - **Create new script** — opens a guided wizard that scaffolds a new `.ps1` with metadata headers.
 - **Browse community scripts** — opens the Script Manager, or falls back to the community [PaletteShellScripts](https://github.com/paletteshell/PaletteShellScripts) repository if it isn't installed.
