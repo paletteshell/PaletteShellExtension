@@ -1,5 +1,6 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
+using ClipboardHelper = PaletteShellExtension.Classes.ClipboardHelper;
 
 namespace PaletteShellExtension.Commands;
 
@@ -16,7 +17,7 @@ internal sealed partial class CopyValueCommand(string text, string name = "Copy"
     {
         try
         {
-            TextCopy.ClipboardService.SetText(text ?? "");
+            ClipboardHelper.SetText(text);
         }
         catch (Exception)
         {

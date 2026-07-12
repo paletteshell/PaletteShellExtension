@@ -8,9 +8,9 @@ namespace PaletteShellExtension.Commands;
 /// <summary>
 /// Runs a no-parameter script fire-and-forget: it has nothing to wait for or surface (output
 /// mode <c>None</c> with no declared timeout), so it launches the script and reports completion
-/// without ever blocking the host's COM call. Every waited mode (Toast/Clipboard/Open/File, or
-/// None with a declared timeout) is routed to <see cref="Pages.ScriptRunPage"/> instead, which
-/// runs asynchronously so the palette can't freeze on a slow script.
+/// without ever blocking the host's COM call. Every waited ambient mode (Toast/Clipboard/Open/File,
+/// or None with a declared timeout) is routed to <see cref="AmbientRunCommand"/> instead, which
+/// dismisses the palette and runs asynchronously so a slow script can't freeze it.
 /// </summary>
 internal sealed partial class RunScriptCommand(string path, ScriptManifest? manifest) : InvokableCommand
 {
@@ -46,7 +46,7 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         // synchronous wait would only block the host for nothing.
         var started = ScriptExecutionService.RunFireAndForget(plan);
         return started
-            ? CommandResult.ShowToast("Script completed")
+            ? AmbientRunner.Toast("Script completed")
             : ScriptFailurePresenter.ToCommandResult(path, plan.Host, "", null);
     }
 }

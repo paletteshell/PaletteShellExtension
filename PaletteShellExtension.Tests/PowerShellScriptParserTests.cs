@@ -85,7 +85,7 @@ public class PowerShellScriptParserTests
     [InlineData("[long]$P", "int")]
     [InlineData("[double]$P", "number")]
     [InlineData("[decimal]$P", "number")]
-    [InlineData("[switch]$P", "bool")]
+    [InlineData("[switch]$P", "switch")] // presence-based flag; distinct UI type from [bool]
     [InlineData("[bool]$P", "bool")]
     [InlineData("$P", "string")] // no type constraint at all
     public void ParameterType_MapsToUiType(string declaration, string expectedUiType)

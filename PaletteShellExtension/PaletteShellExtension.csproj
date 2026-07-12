@@ -16,17 +16,25 @@
     
     <AppxPackageIdentityName>phireForge.PaletteShell</AppxPackageIdentityName>
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
-    <AppxPackageVersion>0.0.7.0</AppxPackageVersion>
+    <AppxPackageVersion>0.0.7.10</AppxPackageVersion>
 
     <!-- Shared self-signed cert for sideload testing (CN matches Publisher). Store re-signs on
          submission, so this is dev-only. Cert must live in CurrentUser\My on the build machine. -->
     <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
     <PackageCertificateThumbprint>655B3250FBBF0E38A4B98C8F44B7DD5E9A9DEC56</PackageCertificateThumbprint>
 
-    <!-- Do not trim the packaged extension. The WinRT projection dependencies and the
-         bundled TextCopy assembly use dynamic/reflection-heavy paths that are not fully
-         trim-annotated, and TextCopy must remain intact for PowerShell script clipboard helpers. -->
-    <PublishTrimmed>false</PublishTrimmed>
+    <!-- Trim the self-contained .NET runtime in Release so the packaged extension stays small.
+         Clipboard uses native WinRT (see ClipboardHelper). The analyzer keeps future trim hazards
+         visible at build time; the TrimmerRootAssembly entries below protect the
+         COM/reflection-activated surface. -->
+    <!-- Gate on Platform (a command-line global, set before this evaluates) rather than
+         RuntimeIdentifier: the MSIX packaging build (dotnet build -p:Platform=x64/ARM64) only
+         injects the RID in a later target, so a RID-only condition never fires on the ship path
+         and the package ships untrimmed. The RID clause keeps `dotnet publish -r <rid>` trimming
+         too. Plain builds/tests run as AnyCPU with no RID, so they skip trimming (which requires
+         self-contained) and avoid NETSDK1102. -->
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release' and ('$(Platform)' == 'x64' or '$(Platform)' == 'ARM64' or '$(RuntimeIdentifier)' != '')">true</PublishTrimmed>
+    <EnableTrimAnalyzer Condition="'$(PublishTrimmed)' == 'true'">true</EnableTrimAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +43,13 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="PaletteShellExtension.Tests" />
+  </ItemGroup>
+
+  <!-- The extension is activated over COM, so root the whole app assembly to keep the
+       COM-activated entry types the trimmer can't statically see. Add more entries here if
+       EnableTrimAnalyzer flags stripped assemblies during publish. -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="PaletteShellExtension" />
   </ItemGroup>
 
   <Target Name="PrepareAssets" BeforeTargets="BeforeBuild">
@@ -52,9 +67,12 @@
     <None Include="PaletteScriptAttributes.psm1">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- Agent-facing script authoring spec. Single source at the repo root; linked into the
-         output so it ships next to the module and gets copied into the user's scripts folder. -->
-    <None Include="..\AGENTS.md" Link="AGENTS.md">
+    <!-- Agent-facing script authoring spec. Linked into the output as AGENTS.md so it ships
+         next to the module and gets copied into the user's scripts folder. -->
+    <None Include="..\docs\PaletteShellScripts.AGENTS.md" Link="AGENTS.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\docs\PaletteShellScripts.Reference.md" Link="PaletteShellScripts.Reference.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -81,7 +99,6 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="TextCopy" />
   </ItemGroup>
 
   <!--

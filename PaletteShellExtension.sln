@@ -7,6 +7,41 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaletteShellExtension", "Pa
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaletteShellExtension.Tests", "PaletteShellExtension.Tests\PaletteShellExtension.Tests.csproj", "{B3E8D0AB-C335-4D95-8F08-E705407147AC}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentation", "{5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Repository Docs", "Repository Docs", "{A8FA3938-B9C7-4D92-8DA1-A0CA51971969}"
+	ProjectSection(SolutionItems) = preProject
+		AGENTS.md = AGENTS.md
+		CONTRIBUTING.md = CONTRIBUTING.md
+		README.md = README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs Indexes", "Docs Indexes", "{62FC42DA-4641-43F5-A586-7B48F1B9E65C}"
+	ProjectSection(SolutionItems) = preProject
+		docs\ExtensionReference.md = docs\ExtensionReference.md
+		docs\README.md = docs\README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Focus Maps", "Focus Maps", "{2DCC1291-5681-408E-97F2-65F24885FE43}"
+	ProjectSection(SolutionItems) = preProject
+		docs\execution-map.md = docs\execution-map.md
+		docs\parser-map.md = docs\parser-map.md
+		docs\ui-map.md = docs\ui-map.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Extension References", "Extension References", "{74BD7327-3D27-44BB-B052-62588D2E59F8}"
+	ProjectSection(SolutionItems) = preProject
+		docs\extension-behavior-reference.md = docs\extension-behavior-reference.md
+		docs\project-structure-reference.md = docs\project-structure-reference.md
+		docs\user-guide.md = docs\user-guide.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Script Authoring", "Script Authoring", "{2EF03AE9-8F45-4029-AB0D-D2AFD808367E}"
+	ProjectSection(SolutionItems) = preProject
+		docs\PaletteShellScripts.AGENTS.md = docs\PaletteShellScripts.AGENTS.md
+		docs\PaletteShellScripts.Reference.md = docs\PaletteShellScripts.Reference.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM64 = Debug|ARM64
@@ -38,6 +73,13 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A8FA3938-B9C7-4D92-8DA1-A0CA51971969} = {5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}
+		{62FC42DA-4641-43F5-A586-7B48F1B9E65C} = {5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}
+		{2DCC1291-5681-408E-97F2-65F24885FE43} = {5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}
+		{74BD7327-3D27-44BB-B052-62588D2E59F8} = {5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}
+		{2EF03AE9-8F45-4029-AB0D-D2AFD808367E} = {5A5C0B76-7C24-4E61-B15C-0BB1E47704E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {CEDBC581-5818-4350-BC8A-A1ECE687D357}

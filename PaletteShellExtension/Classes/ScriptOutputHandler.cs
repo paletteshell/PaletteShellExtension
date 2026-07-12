@@ -72,7 +72,7 @@ internal static class ScriptOutputHandler
     {
         try
         {
-            TextCopy.ClipboardService.SetText(text ?? "");
+            ClipboardHelper.SetText(text);
         }
         catch (Exception ex)
         {

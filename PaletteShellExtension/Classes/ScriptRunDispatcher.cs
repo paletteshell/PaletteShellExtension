@@ -4,8 +4,9 @@ namespace PaletteShellExtension.Classes;
 /// Decides what to do with a completed script run according to its declared
 /// <c>[ScriptOutput(...)]</c> mode, and performs the terminal side effect (set the clipboard,
 /// open the output in an editor, open a safe target). It returns a surface-agnostic
-/// <see cref="RunOutcome"/> so both the async <see cref="Pages.ScriptRunPage"/> (a list surface)
-/// and the parameter form's in-place render (a Markdown surface) share one set of decisions.
+/// <see cref="RunOutcome"/> so the ambient fire-and-forget path (<see cref="AmbientRunner"/>, which
+/// toasts the outcome after dismissing the palette) and the parameter form's in-place render (a
+/// Markdown surface) share one set of decisions.
 ///
 /// This is the async counterpart of the old synchronous output handling: it only ever runs after
 /// the script has finished on a background thread, never on the thread the host is blocked on for
@@ -75,7 +76,9 @@ internal static class ScriptRunDispatcher
                     null,
                     null);
 
-            // "toast" (and any unrecognized value) surfaces the captured output.
+            // "toast" (and any unrecognized value) surfaces the captured output as the Status —
+            // which the ambient path shows in its completion banner (a real toast), and the
+            // parameter form renders in place.
             default:
                 var value = output?.Trim();
                 return string.IsNullOrEmpty(value)

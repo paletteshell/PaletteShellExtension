@@ -260,10 +260,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             }
         }
 
-        // Copy the agent-facing authoring spec so tools pointed at the scripts folder discover
-        // the script contract. Best-effort and always refreshed to stay in sync with the extension.
+        // Copy the short agent-facing guide and full reference so tools pointed at the scripts
+        // folder can start cheaply, then opt into the detailed contract when needed.
         var agentsSourcePath = Path.Combine(baseDir, "AGENTS.md");
         var agentsTargetPath = Path.Combine(root, "AGENTS.md");
+        var referenceSourcePath = Path.Combine(baseDir, "PaletteShellScripts.Reference.md");
+        var referenceTargetPath = Path.Combine(root, "PaletteShellScripts.Reference.md");
 
         if (File.Exists(agentsSourcePath))
         {
@@ -277,19 +279,15 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             }
         }
 
-        // Copy TextCopy.dll and its dependencies so PowerShell can load it
-        var textCopySource = Path.Combine(baseDir, "TextCopy.dll");
-        var textCopyTarget = Path.Combine(root, "TextCopy.dll");
-
-        if (File.Exists(textCopySource))
+        if (File.Exists(referenceSourcePath))
         {
             try
             {
-                CopyIfChanged(textCopySource, textCopyTarget);
+                CopyIfChanged(referenceSourcePath, referenceTargetPath);
             }
             catch (Exception)
             {
-                // Scripts will fall back to Windows Forms clipboard.
+                // Authoring reference copy is best-effort.
             }
         }
     }
@@ -377,6 +375,11 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
         // by completion order, so results are identical to the sequential version.
         var scriptResults = new (bool Pinned, string Title, IListItem Item)?[_files.Count];
 
+        // Probe for pwsh 7 and read the default host once, not per script: both feed the
+        // compatibility gate below, which stays a pure check so it can run in the parallel loop.
+        var pwshAvailable = ScriptRunner.IsPwshInstalled();
+        var defaultHost = PaletteShellSettingsManager.Instance.DefaultHost;
+
         Parallel.For(0, _files.Count, i =>
         {
             var file = _files[i];
@@ -420,7 +423,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
                 // One gate covers app-version range and the elevation/output-capture conflict for
                 // every route below: a blocked script gets a warning row instead of a runnable one.
-                var compat = ScriptCompatibility.Validate(manifest);
+                var compat = ScriptCompatibility.Validate(manifest, pwshAvailable, defaultHost);
                 if (compat.Kind == ScriptCompatibilityKind.RequiresUpdate)
                 {
                     var incompatiblePinned = pins.IsPinned(path);
@@ -444,6 +447,19 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                     {
                         Title = title,
                         Subtitle = $"⚠ Unknown script host '{compat.BadHost}' — use auto, pwsh, or powershell",
+                        Icon = new IconInfo(""), // Warning
+                        MoreCommands = BuildContextCommands(path, pins)
+                    });
+                    return;
+                }
+
+                if (compat.Kind == ScriptCompatibilityKind.PwshMissing)
+                {
+                    var pwshMissingPinned = pins.IsPinned(path);
+                    scriptResults[i] = (pwshMissingPinned, title, new ListItem(new PwshMissingCommand())
+                    {
+                        Title = title,
+                        Subtitle = "⚠ Requires PowerShell 7 (pwsh) — not installed. Install from https://aka.ms/powershell, or set host to 'auto'",
                         Icon = new IconInfo(""), // Warning
                         MoreCommands = BuildContextCommands(path, pins)
                     });
@@ -502,11 +518,12 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
                 }
                 else if (plan is not null && (plan.DeclaredTimeoutMs is not null || plan.SurfacesOutput))
                 {
-                    // No parameters, but a waited mode (Toast/Clipboard/Open/File, or None with a
-                    // declared timeout): run on the async ScriptRunPage so a slow script doesn't
-                    // freeze the host on its blocking COM call. The page shows progress, runs the
-                    // script off-thread, then dispatches the clipboard/toast/file/open behavior.
-                    command = new ScriptRunPage(path, manifest!, plan);
+                    // No parameters, but a waited ambient mode (Toast/Clipboard/Open/File, or None
+                    // with a declared timeout): dismiss the palette and run off-thread, performing
+                    // the clipboard/open/file side effect and toasting completion via a host banner —
+                    // so a fire-and-forget script neither freezes the host nor parks a page the user
+                    // has to dismiss. Display modes (Result/Markdown/List) branched off above.
+                    command = new AmbientRunCommand(path, manifest!, plan);
                 }
                 else
                 {

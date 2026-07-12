@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -7,7 +7,7 @@ using module .\PaletteScriptAttributes.psm1
     Generate a new GUID and show it as a result — press Enter to copy it,
     or "Run again" to generate a fresh one.
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
 [ScriptVersion('1.0.0')]
 [ScriptIcon('🆔')]

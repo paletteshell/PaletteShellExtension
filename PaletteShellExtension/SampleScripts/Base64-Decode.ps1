@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,7 +6,7 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Decode Base64 clipboard text and copy back
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Clipboard')]
 [ScriptVersion('1.0.0')]
 [ScriptIcon('🔓')]

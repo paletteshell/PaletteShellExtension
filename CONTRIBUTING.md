@@ -2,7 +2,7 @@
 
 This covers building, testing, and debugging the **extension itself** (the C# host). If you're
 looking to write a PaletteShell *script*, see the [README](README.md#-creating-your-own-scripts)
-and [AGENTS.md](AGENTS.md) instead — this doc is for people changing the extension's code.
+and [script authoring agent guide](docs/PaletteShellScripts.AGENTS.md) instead — this doc is for people changing the extension's code.
 
 ## Prerequisites
 
@@ -81,5 +81,6 @@ needed to trust the unsigned test package.
 - If you change parsing or manifest behavior, add or update a test in
   `PaletteShellExtension.Tests` rather than relying on manual sideload testing alone.
 - If you change end-user-facing behavior (attributes, output modes, sample scripts), update the
-  relevant section of [README.md](README.md) and, if it affects script authoring, [AGENTS.md](AGENTS.md)
+  relevant section of [README.md](README.md) and, if it affects script authoring, [docs/PaletteShellScripts.AGENTS.md](docs/PaletteShellScripts.AGENTS.md)
+  plus [docs/PaletteShellScripts.Reference.md](docs/PaletteShellScripts.Reference.md)
   in the same PR — they're both meant to stay authoritative.

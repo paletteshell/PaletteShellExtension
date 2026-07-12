@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,7 +6,7 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Open the current user's temp folder in File Explorer. Demonstrates Open output mode.
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
 [ScriptVersion('1.0.0')]
 [ScriptIcon('📂')]

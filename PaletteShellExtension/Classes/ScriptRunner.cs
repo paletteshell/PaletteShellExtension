@@ -201,6 +201,33 @@ internal static partial class ScriptRunner
     /// <summary>Finds pwsh.exe on PATH or in the standard PowerShell 7+ install locations.</summary>
     private static string? FindPwsh() => FindExecutable("pwsh.exe", PwshInstallDirs());
 
+    // pwsh 7 detection is probed once and cached for the process so the discovery gate never
+    // rescans the filesystem on a machine that will never have pwsh. The only things that trigger a
+    // fresh probe are the first script-list build after launch and the explicit "Reload scripts"
+    // action (via InvalidatePwshProbe) — an install is picked up on the next reload, not by polling.
+    // ResolveShell deliberately does NOT use this cache: run-time interpreter selection stays live.
+    private static volatile bool _pwshProbed;
+    private static volatile bool _pwshInstalled;
+
+    /// <summary>True when PowerShell 7 (pwsh.exe) is installed. Probed once and cached for the
+    /// process; only the first list build and an explicit reload (<see cref="InvalidatePwshProbe"/>)
+    /// re-scan, so a pwsh-less machine isn't hit on every rebuild.</summary>
+    public static bool IsPwshInstalled()
+    {
+        if (!_pwshProbed)
+        {
+            _pwshInstalled = FindPwsh() is not null;
+            _pwshProbed = true;
+        }
+
+        return _pwshInstalled;
+    }
+
+    /// <summary>Drops the cached pwsh result so the next <see cref="IsPwshInstalled"/> re-probes.
+    /// Wired to "Reload scripts" so installing pwsh and reloading flips pwsh-pinned scripts to
+    /// runnable at once.</summary>
+    public static void InvalidatePwshProbe() => _pwshProbed = false;
+
     /// <summary>Finds powershell.exe on PATH or in its fixed System32 location.</summary>
     private static string? FindWindowsPowerShell() => FindExecutable("powershell.exe", WindowsPowerShellInstallDirs());
 
@@ -337,9 +364,14 @@ internal static partial class ScriptRunner
         }
 
         var list = string.Join(",", quoted);
+        // Write straight to stderr instead of Write-Error: the latter's rendering depends on
+        // $ErrorView, which is ConciseView (clean one-liner) on PowerShell 7 but NormalView on
+        // Windows PowerShell 5.1 — there it wraps the message in CategoryInfo / FullyQualifiedErrorId
+        // / caret noise that DescribeFailure's 300-char trim then buries. A plain stderr line renders
+        // identically on both hosts.
         return "foreach ($__psRequired in @(" + list + ")) { " +
                "if (-not (Get-Module -ListAvailable -Name $__psRequired)) { " +
-               "Write-Error \"Missing required module '$__psRequired'. Install it with:  Install-Module -Name $__psRequired -Scope CurrentUser\"; " +
+               "[Console]::Error.WriteLine(\"Missing required module '$__psRequired'. Install it with:  Install-Module -Name $__psRequired -Scope CurrentUser\"); " +
                "exit 1 } }; ";
     }
 

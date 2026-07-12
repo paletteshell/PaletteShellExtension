@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS

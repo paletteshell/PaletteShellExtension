@@ -73,9 +73,14 @@ internal sealed class ScriptParameterForm : FormContent
             // a slow script no longer freezes the form while the host is blocked on the submit COM
             // call. Elevated runs can't capture output, so they launch fire-and-forget and report
             // completion immediately.
+            // Ambient (fire-and-forget) modes dismiss the form and toast their outcome; display
+            // modes (Markdown/Result) render their result in place. Elevated runs can't capture
+            // output, so they launch fire-and-forget regardless.
             Func<CommandResult> run = _plan.RequiresAdmin
                 ? () => ExecuteElevated(argsLine)
-                : () => StartAsyncRun(argsLine);
+                : _plan.IsAmbient
+                    ? () => StartAmbientRun(argsLine)
+                    : () => StartAsyncRun(argsLine);
 
             // Destructive scripts gate behind a confirmation dialog; only the dialog's
             // primary command runs the script (with the values already collected here).
@@ -97,6 +102,16 @@ internal sealed class ScriptParameterForm : FormContent
         {
             return CommandResult.GoBack();
         }
+    }
+
+    /// <summary>Runs an ambient (fire-and-forget) script and dismisses the form with a toast of the
+    /// outcome, performing the declared side effect (clipboard/open/file) — so the palette closes
+    /// rather than parking on a result the user didn't need to see. The run is synchronous (see
+    /// <see cref="AmbientRunner"/>); shared with the no-parameter <see cref="Commands.AmbientRunCommand"/>.</summary>
+    private CommandResult StartAmbientRun(string argsLine)
+    {
+        var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
+        return AmbientRunner.RunAndToast(_plan, _manifest, scriptName, argsLine);
     }
 
     /// <summary>Runs the script on a background thread so the host's submit COM call returns at
@@ -165,7 +180,7 @@ internal sealed class ScriptParameterForm : FormContent
     {
         var started = ScriptExecutionService.RunFireAndForget(_plan, argsLine);
         return started
-            ? CommandResult.ShowToast("Script completed")
+            ? AmbientRunner.Toast("Script completed")
             : ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, null);
     }
 

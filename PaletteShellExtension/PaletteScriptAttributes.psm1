@@ -1,4 +1,4 @@
-# PaletteScriptAttributes.psm1
+﻿# PaletteScriptAttributes.psm1
 # Custom attributes for PaletteShell script metadata
 
 using namespace System
@@ -36,13 +36,21 @@ class ScriptTimeoutAttribute : Attribute {
 # Output handling
 class ScriptOutputAttribute : Attribute {
     # None, Toast, Clipboard, Markdown, Result, List, Open, or File.
-    # File writes stdout to a temp file and opens it in the editor; append an
-    # extension hint after a colon to control the file type, e.g. 'File:csv' or 'File:json'.
-    # Result shows stdout as a single copyable result (Enter copies; a "Run again"
-    # command regenerates) — like a calculator answer; good for generators.
-    # List parses stdout (newline-delimited, or a JSON array) into a searchable
-    # results page where each line/object becomes a selectable item.
-    # Open launches the first non-empty stdout line as a URL, file, or folder path.
+    #
+    # Two dispositions:
+    #   Fire-and-forget (the palette closes and a completion banner is shown when done):
+    #     None      - run silently; report completion.
+    #     Toast     - show stdout in the completion banner.
+    #     Clipboard - copy stdout to the clipboard.
+    #     Open      - launch the first non-empty stdout line as a URL, file, or folder path.
+    #     File      - write stdout to a temp file and open it in the editor; append an
+    #                 extension hint after a colon to set the file type, e.g. 'File:csv' or 'File:json'.
+    #   In-palette (the palette stays open on a page that renders the output):
+    #     Result    - show stdout as a single copyable result (Enter copies; a "Run again"
+    #                 command regenerates) — like a calculator answer; good for generators.
+    #     Markdown  - render stdout as Markdown.
+    #     List      - parse stdout (newline-delimited, or a JSON array) into a searchable
+    #                 results page where each line/object becomes a selectable item.
     [string]$Mode
     ScriptOutputAttribute([string]$mode) { $this.Mode = $mode }
 }
@@ -111,13 +119,13 @@ class ScriptEnvAttribute : Attribute {
     }
 }
 
-# Cross-platform clipboard functions using TextCopy
+# Clipboard functions: built-in Get/Set-Clipboard first, Windows Forms as fallback.
 function Get-ClipboardText {
     <#
     .SYNOPSIS
-        Gets text from the clipboard in a cross-platform way.
+        Gets text from the clipboard.
     .DESCRIPTION
-        Uses TextCopy library for cross-platform clipboard access with Windows Forms fallback.
+        Uses the built-in Get-Clipboard cmdlet (PowerShell 5+) with a Windows Forms fallback.
     #>
 
     # Use built-in Get-Clipboard if available (PowerShell 5+)
@@ -154,27 +162,6 @@ function Set-ClipboardText {
     }
     catch {
         # Built-in Set-Clipboard failed; fall through to the next method.
-    }
-
-    # Try TextCopy
-    try {
-        $textCopyDll = Join-Path $PSScriptRoot 'TextCopy.dll'
-        
-        if (Test-Path $textCopyDll) {
-            $loaded = [AppDomain]::CurrentDomain.GetAssemblies() | 
-                Where-Object { $_.GetName().Name -eq 'TextCopy' } | 
-                Select-Object -First 1
-
-            if (-not $loaded) {
-                $assembly = [System.Reflection.Assembly]::LoadFrom($textCopyDll)
-            }
-
-            [TextCopy.ClipboardService]::SetText($Text)
-            return
-        }
-    }
-    catch {
-        # TextCopy failed; fall through to the Windows Forms fallback.
     }
 
     # Fallback to Windows Forms

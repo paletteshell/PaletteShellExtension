@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -8,7 +8,7 @@ using module .\PaletteScriptAttributes.psm1
     Explorer windows will close, so it asks for confirmation first (demonstrates
     ConfirmBeforeRun).
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('System')]
 [ScriptVersion('1.0.0')]
 [ScriptIcon('🔁')]

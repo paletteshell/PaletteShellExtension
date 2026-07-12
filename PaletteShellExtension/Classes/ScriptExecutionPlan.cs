@@ -50,4 +50,16 @@ internal sealed class ScriptExecutionPlan
     /// <summary>True when the declared output mode needs the script's stdout (anything but None).</summary>
     public bool SurfacesOutput
         => !string.Equals(OutputMode, "None", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Output modes whose payoff lives *in* the palette: they navigate to a page that
+    /// stays open and renders the run's output. Everything else is "ambient" — the effect is
+    /// external (open a file/URL, set the clipboard) or nil, so the run dismisses the palette and
+    /// reports completion through a host banner instead of parking a page.</summary>
+    private static readonly HashSet<string> DisplayModes =
+        new(StringComparer.OrdinalIgnoreCase) { "Result", "Markdown", "List" };
+
+    /// <summary>True for the fire-and-forget dispositions (None/Toast/Clipboard/Open/File): the
+    /// run's payoff is external or nil, so the palette dismisses and completion is surfaced via a
+    /// host banner rather than an in-palette page. False for the display modes (Result/Markdown/List).</summary>
+    public bool IsAmbient => !DisplayModes.Contains(OutputMode);
 }
