@@ -130,6 +130,10 @@ function Get-ClipboardText {
 
     # Use built-in Get-Clipboard if available (PowerShell 5+)
     if (Get-Command -Name Get-Clipboard -ErrorAction SilentlyContinue) {
+        # PowerShell 7+ (Core) Get-Clipboard is text-only and has no -Format parameter.
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            return Get-Clipboard -Raw
+        }
         return Get-Clipboard -Format Text -Raw
     }
 

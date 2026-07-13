@@ -16,7 +16,7 @@
     
     <AppxPackageIdentityName>phireForge.PaletteShell</AppxPackageIdentityName>
     <AppxPackagePublisher>phireForge</AppxPackagePublisher>
-    <AppxPackageVersion>0.0.7.0</AppxPackageVersion>
+    <AppxPackageVersion>0.0.8.0</AppxPackageVersion>
 
     <!-- Shared self-signed cert for sideload testing (CN matches Publisher). Store re-signs on
          submission, so this is dev-only. Cert must live in CurrentUser\My on the build machine. -->
