@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,8 +6,9 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Remove leading and trailing whitespace from each line
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Clipboard')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('✂️')]
 [ScriptTimeout(10000)]
 [ScriptOutput('None')]

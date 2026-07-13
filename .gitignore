@@ -132,7 +132,9 @@ BundleArtifacts/
 # Azure / publish
 # =========================
 *.publish.xml
-*.pubxml
+# .pubxml publish profiles are project config referenced by the csproj
+# (<PublishProfile>win-$(Platform).pubxml</PublishProfile>), so CI needs them
+# in the repo; only the user-specific .pubxml.user is ignored (via *.user).
 *.publishproj
 PublishScripts/
 
@@ -167,3 +169,8 @@ BenchmarkDotNet.Artifacts/
 # =========================
 !Directory.Build.rsp
 /PaletteShellExtension/bundle_mapping.txt
+signing/
+/PaletteShellExtension/*.msixbundle
+/.github/skills
+/.agents/skills
+/agent/skills

@@ -1,6 +1,7 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -59,6 +60,7 @@ internal sealed partial class NewScriptWizardForm : FormContent
         { "title": "Markdown — render output as Markdown", "value": "Markdown" },
         { "title": "Result — single copyable result", "value": "Result" },
         { "title": "List — searchable list of items", "value": "List" },
+        { "title": "Open — open a URL, file, or folder", "value": "Open" },
         { "title": "File — open output in editor", "value": "File" }
       ]
     },
@@ -94,6 +96,12 @@ internal sealed partial class NewScriptWizardForm : FormContent
       "id": "confirm",
       "label": "Confirmation message (optional — prompts before running)",
       "placeholder": "Are you sure you want to run this script?"
+    },
+    {
+      "type": "Input.Text",
+      "id": "modules",
+      "label": "Required modules (optional — comma-separated)",
+      "placeholder": "ImportExcel, Az.Accounts"
     },
     {
       "type": "Input.Toggle",
@@ -139,7 +147,8 @@ internal sealed partial class NewScriptWizardForm : FormContent
             Host: ParseHost(formInput["host"]?.ToString()),
             TimeoutMs: ParseTimeout(formInput["timeout"]?.ToString()),
             RequiresElevation: (formInput["elevate"]?.ToString() ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase),
-            ConfirmMessage: formInput["confirm"]?.ToString()?.Trim());
+            ConfirmMessage: formInput["confirm"]?.ToString()?.Trim(),
+            RequiredModules: ParseModules(formInput["modules"]?.ToString()));
 
         var open = (formInput["open"]?.ToString() ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
 
@@ -175,6 +184,20 @@ internal sealed partial class NewScriptWizardForm : FormContent
             : trimmed;
     }
 
+    // Splits the comma-separated modules field into distinct names, dropping blanks. The
+    // generated script emits one [RequiresModule('Name')] per entry.
+    private static IReadOnlyList<string> ParseModules(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        return raw.Split(',')
+            .Select(m => m.Trim())
+            .Where(m => m.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     // Null means "no override" — the generated script omits [ScriptTimeout(...)] and falls
     // back to the global default timeout setting at runtime.
     private static int? ParseTimeout(string? raw)
@@ -198,7 +221,8 @@ internal sealed partial class NewScriptWizardForm : FormContent
         string? Host,
         int? TimeoutMs,
         bool RequiresElevation,
-        string? ConfirmMessage);
+        string? ConfirmMessage,
+        IReadOnlyList<string> RequiredModules);
 
     private static string? CreateScript(string root, string rawName, ScriptOptions options)
     {
@@ -261,6 +285,15 @@ internal sealed partial class NewScriptWizardForm : FormContent
         var group = string.IsNullOrWhiteSpace(options.Group) ? "General" : options.Group;
         sb.Append(CultureInfo.InvariantCulture, $"[ScriptGroup('{EscapeSingleQuoted(group)}')]\n");
 
+        // Every script starts at 1.0.0 unless the author bumps it; stamping it here means every
+        // PaletteShell-authored script carries a version, so tooling never has to guess one.
+        sb.Append("[ScriptVersion('1.0.0')]\n");
+
+        // Stamps the app version the script was scaffolded against, so a copy of this script
+        // taken to an older PaletteShell install shows "Requires an update" instead of running
+        // against attributes/behavior it doesn't recognize yet.
+        sb.Append(CultureInfo.InvariantCulture, $"[RequiresPaletteShellMinimum('{AppVersion.Current}')]\n");
+
         if (!string.IsNullOrWhiteSpace(options.Icon))
             sb.Append(CultureInfo.InvariantCulture, $"[ScriptIcon('{EscapeSingleQuoted(options.Icon)}')]\n");
 
@@ -269,6 +302,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
 
         if (!string.IsNullOrWhiteSpace(options.ConfirmMessage))
             sb.Append(CultureInfo.InvariantCulture, $"[ConfirmBeforeRun('{EscapeSingleQuoted(options.ConfirmMessage)}')]\n");
+
+        // One attribute per module — a missing one fails the run with an Install-Module hint.
+        foreach (var module in options.RequiredModules)
+            sb.Append(CultureInfo.InvariantCulture, $"[RequiresModule('{EscapeSingleQuoted(module)}')]\n");
 
         // Omitted entirely when the user didn't override it, so the script picks up the
         // global default timeout setting at runtime instead of freezing in today's value.
@@ -303,6 +340,10 @@ internal sealed partial class NewScriptWizardForm : FormContent
         "List" =>
             "# Print newline-delimited items, or a JSON array of objects (title/subtitle/value/url/icon) for richer items.\n" +
             "Get-ChildItem -Name\n",
+
+        "Open" =>
+            "# Emit a URL, file path, or folder path; Open mode launches the first non-empty line.\n" +
+            "[System.IO.Path]::GetTempPath()\n",
 
         "Markdown" =>
             "# Captured stdout is rendered as Markdown on its own page.\n" +

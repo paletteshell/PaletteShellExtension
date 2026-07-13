@@ -1,4 +1,4 @@
-# PaletteScriptAttributes.psm1
+﻿# PaletteScriptAttributes.psm1
 # Custom attributes for PaletteShell script metadata
 
 using namespace System
@@ -35,13 +35,22 @@ class ScriptTimeoutAttribute : Attribute {
 
 # Output handling
 class ScriptOutputAttribute : Attribute {
-    # None, Toast, Clipboard, Markdown, Result, File, or List.
-    # File writes stdout to a temp file and opens it in the editor; append an
-    # extension hint after a colon to control the file type, e.g. 'File:csv' or 'File:json'.
-    # Result shows stdout as a single copyable result (Enter copies; a "Run again"
-    # command regenerates) — like a calculator answer; good for generators.
-    # List parses stdout (newline-delimited, or a JSON array) into a searchable
-    # results page where each line/object becomes a selectable item.
+    # None, Toast, Clipboard, Markdown, Result, List, Open, or File.
+    #
+    # Two dispositions:
+    #   Fire-and-forget (the palette closes and a completion banner is shown when done):
+    #     None      - run silently; report completion.
+    #     Toast     - show stdout in the completion banner.
+    #     Clipboard - copy stdout to the clipboard.
+    #     Open      - launch the first non-empty stdout line as a URL, file, or folder path.
+    #     File      - write stdout to a temp file and open it in the editor; append an
+    #                 extension hint after a colon to set the file type, e.g. 'File:csv' or 'File:json'.
+    #   In-palette (the palette stays open on a page that renders the output):
+    #     Result    - show stdout as a single copyable result (Enter copies; a "Run again"
+    #                 command regenerates) — like a calculator answer; good for generators.
+    #     Markdown  - render stdout as Markdown.
+    #     List      - parse stdout (newline-delimited, or a JSON array) into a searchable
+    #                 results page where each line/object becomes a selectable item.
     [string]$Mode
     ScriptOutputAttribute([string]$mode) { $this.Mode = $mode }
 }
@@ -50,6 +59,44 @@ class ScriptOutputAttribute : Attribute {
 class ScriptGroupAttribute : Attribute {
     [string]$Name
     ScriptGroupAttribute([string]$name) { $this.Name = $name }
+}
+
+# Free-form tags, comma-delimited (e.g. [ScriptTags('network,dns,admin')]). Used by tooling
+# such as the Script Manager's catalog browser.
+class ScriptTagsAttribute : Attribute {
+    [string]$Tags
+    ScriptTagsAttribute([string]$tags) { $this.Tags = $tags }
+}
+
+# Script version (recommended: SemVer, e.g. '1.0.0'). Lets tools detect when a newer copy is available.
+class ScriptVersionAttribute : Attribute {
+    [string]$Version
+    ScriptVersionAttribute([string]$version) { $this.Version = $version }
+}
+
+# Requires a PowerShell module be installed to run this script. Repeat the attribute for
+# multiple modules, e.g. [RequiresModule('ImportExcel')] [RequiresModule('Az.Accounts')].
+# When the script is run, PaletteShell checks each module and fails with an Install-Module
+# hint if it isn't available.
+class RequiresModuleAttribute : Attribute {
+    [string]$Name
+    RequiresModuleAttribute([string]$name) { $this.Name = $name }
+}
+
+# Minimum PaletteShell app version (SemVer) required to run this script. PaletteShell hides
+# the script (with an explanatory row) instead of running it when the installed app is older.
+class RequiresPaletteShellMinimumAttribute : Attribute {
+    [string]$Version
+    RequiresPaletteShellMinimumAttribute([string]$version) { $this.Version = $version }
+}
+
+# Maximum PaletteShell app version (SemVer) this script still works on - for a script that
+# depends on behavior later removed or changed. PaletteShell hides the script (with an
+# explanatory row) instead of running it when the installed app is newer. Optional; most scripts
+# should omit this and only set RequiresPaletteShellMinimum.
+class RequiresPaletteShellMaximumAttribute : Attribute {
+    [string]$Version
+    RequiresPaletteShellMaximumAttribute([string]$version) { $this.Version = $version }
 }
 
 # Icon emoji or glyph
@@ -72,13 +119,13 @@ class ScriptEnvAttribute : Attribute {
     }
 }
 
-# Cross-platform clipboard functions using TextCopy
+# Clipboard functions: built-in Get/Set-Clipboard first, Windows Forms as fallback.
 function Get-ClipboardText {
     <#
     .SYNOPSIS
-        Gets text from the clipboard in a cross-platform way.
+        Gets text from the clipboard.
     .DESCRIPTION
-        Uses TextCopy library for cross-platform clipboard access with Windows Forms fallback.
+        Uses the built-in Get-Clipboard cmdlet (PowerShell 5+) with a Windows Forms fallback.
     #>
 
     # Use built-in Get-Clipboard if available (PowerShell 5+)
@@ -115,27 +162,6 @@ function Set-ClipboardText {
     }
     catch {
         # Built-in Set-Clipboard failed; fall through to the next method.
-    }
-
-    # Try TextCopy
-    try {
-        $textCopyDll = Join-Path $PSScriptRoot 'TextCopy.dll'
-        
-        if (Test-Path $textCopyDll) {
-            $loaded = [AppDomain]::CurrentDomain.GetAssemblies() | 
-                Where-Object { $_.GetName().Name -eq 'TextCopy' } | 
-                Select-Object -First 1
-
-            if (-not $loaded) {
-                $assembly = [System.Reflection.Assembly]::LoadFrom($textCopyDll)
-            }
-
-            [TextCopy.ClipboardService]::SetText($Text)
-            return
-        }
-    }
-    catch {
-        # TextCopy failed; fall through to the Windows Forms fallback.
     }
 
     # Fallback to Windows Forms

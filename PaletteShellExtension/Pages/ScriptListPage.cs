@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PaletteShellExtension.Pages;
@@ -36,9 +37,7 @@ internal sealed partial class ScriptListPage : DynamicListPage
 {
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
 
     // When set, the page feeds the palette's search text to the script as this parameter
     // and re-runs on change; when null the script runs once and search filters locally.
@@ -47,8 +46,11 @@ internal sealed partial class ScriptListPage : DynamicListPage
     private IListItem[] _items = [];
     private bool _started;
 
-    // Guards against stale async runs clobbering newer ones as the user types.
-    private int _queryVersion;
+    // Cancelled and replaced on each keystroke: a pending debounce delay stops immediately,
+    // and a run already in flight discards its results instead of clobbering newer ones.
+    // Superseded sources are dropped without Dispose — they hold no timer once cancelled,
+    // and the in-flight task may still be reading the token.
+    private CancellationTokenSource? _debounceCts;
 
     // Debounce so we don't launch a process on every keystroke.
     private const int DebounceMs = 300;
@@ -56,15 +58,11 @@ internal sealed partial class ScriptListPage : DynamicListPage
     public ScriptListPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null)
+        ScriptExecutionPlan plan)
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
         _queryParam = manifest.Parameters.FirstOrDefault()?.Name;
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
@@ -106,19 +104,20 @@ internal sealed partial class ScriptListPage : DynamicListPage
         }
 
         // Dynamic provider: re-run the script with the new query, debounced.
-        var version = ++_queryVersion;
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _debounceCts, cts)?.Cancel();
         IsLoading = true;
 
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(DebounceMs);
-                if (version != _queryVersion)
-                {
-                    return; // Superseded by a newer keystroke.
-                }
-                Run(newSearch, version);
+                await Task.Delay(DebounceMs, cts.Token);
+                await ExecuteAsync(newSearch, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Superseded by a newer keystroke.
             }
             catch (Exception)
             {
@@ -128,71 +127,53 @@ internal sealed partial class ScriptListPage : DynamicListPage
     }
 
     /// <summary>Runs the script (with the query as its argument, if dynamic) and rebuilds the
-    /// item list. <paramref name="version"/>, when given, is checked after the run so a slow
+    /// item list. <paramref name="cancellationToken"/> is checked after the run so a slow
     /// query can't overwrite the results of a newer one.</summary>
-    private void Run(string? query, int? version = null)
+    private void Run(string? query, CancellationToken cancellationToken = default)
     {
-        if (version is null)
-        {
-            _ = Task.Run(() => Execute(query, version));
-        }
-        else
-        {
-            Execute(query, version);
-        }
+        // Task.Run keeps the synchronous prefix (Process.Start) off the caller's thread —
+        // GetItems calls this — and ExecuteAsync catches everything, so the abandoned task
+        // can't fault. The thread is released at the first await; the script's run time is
+        // spent awaiting, not pinning a pool thread.
+        _ = Task.Run(() => ExecuteAsync(query, cancellationToken));
     }
 
-    private void Execute(string? query, int? version)
+    private async Task ExecuteAsync(string? query, CancellationToken cancellationToken)
     {
         try
         {
-            var args = BuildArgs(query);
+            var args = _queryParam is null ? "" : ScriptArgumentBuilder.BuildQueryArg(_queryParam, query);
 
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
+            // Elevated scripts can't have their output captured, so an elevated script never
+            // reaches List mode (the compatibility gate blocks it) — the plan's RequiresAdmin is
+            // false here. Awaited rather than blocked on so a slow provider doesn't pin a
+            // threadpool thread per keystroke. The token deliberately isn't passed down: a
+            // superseded run's process finishes (or times out) on its own.
+            var result = await ScriptExecutionService.RunAsync(_plan, args);
 
-            // Elevated scripts can't have their output captured, so List mode always
-            // runs unelevated — there'd be nothing to list otherwise.
-            var result = ScriptRunner.RunScriptAndWait(
-                scriptPath: _scriptPath,
-                args: args,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout);
-
-            if (version is not null && version != _queryVersion)
+            if (cancellationToken.IsCancellationRequested)
             {
-                return; // A newer query finished after we started; discard this one.
+                return; // A newer query arrived while this ran; discard this one.
             }
 
-            _items = BuildItems(result);
+            _items = BuildItems(result, args);
         }
         catch (Exception ex)
         {
-            _items = [Message($"Error running script: {ex.Message}")];
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                var args = _queryParam is null ? "" : ScriptArgumentBuilder.BuildQueryArg(_queryParam, query);
+                _items = [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, args, ex)];
+            }
         }
         finally
         {
-            if (version is null || version == _queryVersion)
+            if (!cancellationToken.IsCancellationRequested)
             {
                 IsLoading = false;
                 RaiseItemsChanged();
             }
         }
-    }
-
-    /// <summary>Builds the command-line argument that passes the search text to the script's
-    /// query parameter. Empty text is omitted so the script's own default applies.</summary>
-    private string BuildArgs(string? query)
-    {
-        if (_queryParam is null || string.IsNullOrEmpty(query))
-        {
-            return "";
-        }
-
-        // Single-quote the literal so paths and spaces reach the script intact.
-        return $"-{_queryParam} '{query.Replace("'", "''")}'";
     }
 
     private static IListItem[] Filter(IListItem[] items, string? search)
@@ -207,16 +188,12 @@ internal sealed partial class ScriptListPage : DynamicListPage
             || (i.Subtitle?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))];
     }
 
-    private static IListItem[] BuildItems(ScriptRunner.ScriptResult? result)
+    private IListItem[] BuildItems(ScriptRunner.ScriptResult? result, string args)
     {
-        if (result is null)
-            return [Message("Failed to start script.")];
-
-        if (result.TimedOut)
-            return [Message("Script timed out.")];
-
-        if (result.ExitCode != 0)
-            return [Message(ScriptRunner.DescribeFailure(result))];
+        // Failures get an actionable row (Enter opens the full failure report) instead of
+        // an inert message, so the user can see the whole error rather than a summary.
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, args, result)];
 
         var output = result.StandardOutput;
         if (string.IsNullOrWhiteSpace(output))

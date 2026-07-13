@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -7,8 +7,9 @@ using module .\PaletteScriptAttributes.psm1
     Look up this machine's public IP address and show it as a result —
     press Enter to copy it, or "Run again" to re-check.
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🌐')]
 [ScriptTimeout(10000)]
 [ScriptOutput('Result')]

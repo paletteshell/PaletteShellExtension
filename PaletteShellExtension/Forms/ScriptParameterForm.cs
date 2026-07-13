@@ -1,3 +1,4 @@
+using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using PaletteShellExtension.Commands;
@@ -13,30 +14,24 @@ internal sealed class ScriptParameterForm : FormContent
 {
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
-    private readonly Action<string>? _onMarkdown;
+    private readonly ScriptExecutionPlan _plan;
+    private readonly Action<IContent>? _onContent;
     private readonly Action? _onRunStarted;
     private readonly Action? _onRunFinished;
 
     public ScriptParameterForm(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null,
-        Action<string>? onMarkdown = null,
+        ScriptExecutionPlan plan,
+        Action<IContent>? onContent = null,
         Action? onRunStarted = null,
         Action? onRunFinished = null)
     {
 
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
-        _onMarkdown = onMarkdown;
+        _plan = plan;
+        _onContent = onContent;
         _onRunStarted = onRunStarted;
         _onRunFinished = onRunFinished;
 
@@ -71,32 +66,22 @@ internal sealed class ScriptParameterForm : FormContent
                 });
             }
 
-            // Build argument list from form values
-            var args = new List<string>();
-            foreach (var param in _manifest.Parameters)
-            {
-                var value = obj[param.Name]?.ToString();
+            // Build argument line from form values (quoting centralized in ScriptArgumentBuilder).
+            var argsLine = ScriptArgumentBuilder.BuildFromForm(_manifest.Parameters, obj);
 
-                // Skip empty optional parameters
-                if (string.IsNullOrWhiteSpace(value) && param.Required != true)
-                    continue;
-
-                args.Add($"-{param.Name}");
-                args.Add(FormatArgValue(param, value ?? ""));
-            }
-
-            var argsLine = string.Join(" ", args);
-
-            // Markdown output renders in place on this page, so run it asynchronously and show a
-            // "Running…" spinner while it works — a slow script (e.g. an event-log query) no
-            // longer leaves the form looking frozen. Other modes surface a quick toast and are
-            // typically instant, so they keep the simple synchronous path.
-            var runsInPage = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase)
-                && _onMarkdown is not null;
-
-            Func<CommandResult> run = runsInPage
-                ? () => StartMarkdownRun(argsLine)
-                : () => Execute(argsLine);
+            // Every waited run happens on a background thread and renders its result (or performs
+            // its clipboard/open/file effect) in place, showing a "Running…" spinner meanwhile — so
+            // a slow script no longer freezes the form while the host is blocked on the submit COM
+            // call. Elevated runs can't capture output, so they launch fire-and-forget and report
+            // completion immediately.
+            // Ambient (fire-and-forget) modes dismiss the form and toast their outcome; display
+            // modes (Markdown/Result) render their result in place. Elevated runs can't capture
+            // output, so they launch fire-and-forget regardless.
+            Func<CommandResult> run = _plan.RequiresAdmin
+                ? () => ExecuteElevated(argsLine)
+                : _plan.IsAmbient
+                    ? () => StartAmbientRun(argsLine)
+                    : () => StartAsyncRun(argsLine);
 
             // Destructive scripts gate behind a confirmation dialog; only the dialog's
             // primary command runs the script (with the values already collected here).
@@ -120,38 +105,40 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    /// <summary>Runs a Markdown-output script on a background thread so the UI thread isn't
-    /// blocked, signalling the page to show a "Running…" spinner while it works and rendering the
-    /// result (or an error) in place when it finishes.</summary>
-    private CommandResult StartMarkdownRun(string argsLine)
+    /// <summary>Runs an ambient (fire-and-forget) script and dismisses the form with a toast of the
+    /// outcome, performing the declared side effect (clipboard/open/file) — so the palette closes
+    /// rather than parking on a result the user didn't need to see. The run is synchronous (see
+    /// <see cref="AmbientRunner"/>); shared with the no-parameter <see cref="Commands.AmbientRunCommand"/>.</summary>
+    private CommandResult StartAmbientRun(string argsLine)
+    {
+        return AmbientRunner.RunAndToast(_plan, _manifest, argsLine);
+    }
+
+    /// <summary>Runs the script on a background thread so the host's submit COM call returns at
+    /// once, showing a "Running…" spinner meanwhile and rendering the result in place when it
+    /// finishes. On success the declared output effect (clipboard/open/file) is performed and a
+    /// short status is shown; Markdown/Toast modes render their output. Never reached for elevated
+    /// runs (they can't capture output — see <see cref="ExecuteElevated"/>).</summary>
+    private CommandResult StartAsyncRun(string argsLine)
     {
         _onRunStarted?.Invoke();
 
-        _ = Task.Run(() =>
+        _ = Task.Run(async () =>
         {
-            string body;
+            IContent content;
             try
             {
-                var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-                var result = ScriptRunner.RunScriptAndWait(
-                    scriptPath: _scriptPath,
-                    args: argsLine,
-                    host: _host,
-                    cwd: _cwd,
-                    env: _env,
-                    requiresAdmin: false,
-                    timeoutMs: timeout);
-
-                body = FormatMarkdownResult(result);
+                var result = await ScriptExecutionService.RunAsync(_plan, argsLine);
+                content = FormatAsyncResult(result, argsLine);
             }
             catch (Exception ex)
             {
-                body = $"**Error running script**\n\n```\n{ex.Message}\n```";
+                content = new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, ex);
             }
 
             try
             {
-                _onMarkdown!(body);
+                _onContent?.Invoke(content);
             }
             finally
             {
@@ -162,74 +149,38 @@ internal sealed class ScriptParameterForm : FormContent
         return CommandResult.KeepOpen();
     }
 
-    /// <summary>Turns a run result into the Markdown body to render, mirroring the no-parameter
-    /// Markdown page: failures and empty output become a short note rather than a blank panel.</summary>
-    private static string FormatMarkdownResult(ScriptRunner.ScriptResult? result)
+    /// <summary>Turns a completed run into the Markdown body to render in place. Failures render
+    /// inline (with stderr); a success performs the declared output effect via
+    /// <see cref="ScriptRunDispatcher"/> and shows its status (or the rendered output for
+    /// Markdown/Toast modes).</summary>
+    private IContent FormatAsyncResult(ScriptRunner.ScriptResult? result, string argsLine)
     {
-        if (result is null)
-            return "_Failed to start script._";
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, result);
 
-        if (result.TimedOut)
-            return "_Script timed out._";
-
-        if (result.ExitCode != 0)
-        {
-            var error = result.StandardError?.Trim();
-            return string.IsNullOrEmpty(error)
-                ? $"**Script failed with exit code {result.ExitCode}.**"
-                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
-        }
-
-        return string.IsNullOrWhiteSpace(result.StandardOutput)
-            ? "_Script completed with no output._"
-            : result.StandardOutput!;
-    }
-
-    /// <summary>Runs the script with the already-built argument line and turns its result into
-    /// a <see cref="CommandResult"/> per the declared output mode.</summary>
-    private CommandResult Execute(string argsLine)
-    {
+        var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
         try
         {
-            // Run script and wait for completion
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
-            var result = ScriptRunner.RunScriptAndWait(
-                scriptPath: _scriptPath,
-                args: argsLine,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout);
-
-            if (result == null)
-                return CommandResult.ShowToast("Error: Failed to start script");
-
-            if (result.TimedOut)
-                return CommandResult.ShowToast("Script timed out");
-
-            if (result.ExitCode != 0)
-                return CommandResult.ShowToast(ScriptRunner.DescribeFailure(result));
-
-            // Markdown output - render the result in place instead of a toast.
-            var wantsMarkdown = string.Equals(_manifest.Output, "Markdown", StringComparison.OrdinalIgnoreCase);
-            if (wantsMarkdown && _onMarkdown is not null)
+            return new MarkdownContent
             {
-                _onMarkdown(result.StandardOutput ?? "");
-                return CommandResult.KeepOpen();
-            }
-
-            // Clipboard / File / Status / Toast / None are handled identically to the no-parameter path.
-            return ScriptOutputHandler.ToResult(
-                _manifest.Output,
-                result.StandardOutput,
-                _manifest.FileExtension,
-                System.IO.Path.GetFileNameWithoutExtension(_scriptPath));
+                Body = ScriptRunDispatcher.Apply(_manifest, result.StandardOutput, scriptName).Status
+            };
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return CommandResult.GoBack();
+            return new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, ex);
         }
+    }
+
+    /// <summary>Launches an elevated script fire-and-forget. Elevated scripts can't have their
+    /// output captured, so the routing gate only lets one reach here when its output is None —
+    /// there's nothing to wait for or surface, so this returns immediately.</summary>
+    private CommandResult ExecuteElevated(string argsLine)
+    {
+        var started = ScriptExecutionService.RunFireAndForget(_plan, argsLine);
+        return started
+            ? AmbientRunner.Toast("Script completed")
+            : ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, (ScriptRunner.ScriptResult?)null);
     }
 
     /// <summary>Returns the label/name of each required parameter whose submitted value is
@@ -307,6 +258,7 @@ internal sealed class ScriptParameterForm : FormContent
         switch (param.Type)
         {
             case "bool":
+            case "switch":
                 return new JsonObject
                 {
                     ["type"] = "Input.Toggle",
@@ -375,6 +327,7 @@ internal sealed class ScriptParameterForm : FormContent
 
     private static string BuildDataJson() => new JsonObject().ToJsonString();
 
+
     private static string? ParseVerb(string? data)
     {
         if (string.IsNullOrWhiteSpace(data))
@@ -389,20 +342,4 @@ internal sealed class ScriptParameterForm : FormContent
         }
     }
 
-    /// <summary>
-    /// Formats a form value as a PowerShell command-line argument. Booleans become
-    /// <c>$true</c>/<c>$false</c>; parameters marked <c>[AllowExpression]</c> are injected
-    /// verbatim so PowerShell evaluates them; everything else is a single-quoted literal so
-    /// <c>$</c>, <c>;</c>, backticks and quotes reach the script intact rather than being evaluated.
-    /// </summary>
-    private static string FormatArgValue(ScriptParameter param, string value)
-    {
-        if (param.Type == "bool")
-            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "$true" : "$false";
-
-        if (param.AllowExpression)
-            return value;
-
-        return "'" + value.Replace("'", "''") + "'";
-    }
 }

@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,8 +6,9 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Show a quick system summary rendered as Markdown
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🖥️')]
 [ScriptTimeout(15000)]
 [ScriptOutput('Markdown')]

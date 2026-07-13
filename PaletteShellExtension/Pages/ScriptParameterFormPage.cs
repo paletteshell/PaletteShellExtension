@@ -12,9 +12,7 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
     // Kept so the input form can be rebuilt fresh (see GetContent).
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
-    private readonly string? _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string>? _env;
+    private readonly ScriptExecutionPlan _plan;
 
     private ScriptParameterForm _form;
     private readonly MarkdownContent _markdown = new();
@@ -28,15 +26,11 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
     public ScriptParameterFormPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null)
+        ScriptExecutionPlan plan)
     {
         _scriptPath = scriptPath;
         _manifest = manifest;
-        _host = host;
-        _cwd = cwd;
-        _env = env;
+        _plan = plan;
 
         _form = CreateForm();
         _content = [_form];
@@ -48,7 +42,7 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
     }
 
     private ScriptParameterForm CreateForm()
-        => new(_scriptPath, _manifest, _host, _cwd, _env, ShowMarkdown, BeginRun, EndRun);
+        => new(_scriptPath, _manifest, _plan, ShowContent, BeginRun, EndRun);
 
     // Called by the form the moment a run starts, so the user gets immediate feedback instead
     // of a frozen form: swap to a "Running…" panel and turn on the page's loading spinner while
@@ -71,14 +65,11 @@ internal sealed partial class ScriptParameterFormPage : ContentPage
         RaiseItemsChanged();
     }
 
-    // Called by the form (when the script declares ScriptOutput("Markdown")) to
-    // replace the input form with the rendered script output.
-    private void ShowMarkdown(string body)
+    // Called by the form to replace the input form with rendered script output or an actionable
+    // failure card.
+    private void ShowContent(IContent content)
     {
-        _markdown.Body = string.IsNullOrWhiteSpace(body)
-            ? "_Script completed with no output._"
-            : body;
-        _content = [_markdown];
+        _content = [content];
         _lastRunActivityTick = Environment.TickCount64;
         RaiseItemsChanged();
     }

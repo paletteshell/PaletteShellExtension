@@ -1,6 +1,7 @@
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
+using PaletteShellExtension.Forms;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,14 +13,12 @@ namespace PaletteShellExtension.Pages;
 // Used when a script declares ScriptOutput("Markdown").
 internal sealed partial class ScriptMarkdownPage : ContentPage
 {
-    private readonly string _scriptPath;
-    private readonly ScriptManifest _manifest;
-    private readonly string _host;
-    private readonly string? _cwd;
-    private readonly Dictionary<string, string> _env;
+    private readonly ScriptExecutionPlan _plan;
     private readonly string _args;
+    private readonly string _scriptPath;
 
     private readonly MarkdownContent _content = new();
+    private IContent[] _currentContent;
 
     // A script run is in flight; ignore re-entrant content fetches while it is.
     private bool _running;
@@ -27,17 +26,13 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
     public ScriptMarkdownPage(
         string scriptPath,
         ScriptManifest manifest,
-        string? host = null,
-        string? cwd = null,
-        Dictionary<string, string>? env = null,
+        ScriptExecutionPlan plan,
         string args = "")
     {
         _scriptPath = scriptPath;
-        _manifest = manifest;
-        _host = host ?? manifest.Host ?? PaletteShellSettingsManager.Instance.DefaultHost;
-        _cwd = cwd;
-        _env = env ?? new(StringComparer.OrdinalIgnoreCase);
+        _plan = plan;
         _args = args;
+        _currentContent = [_content];
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
         Name = "Run";
@@ -61,31 +56,23 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
             _ = Task.Run(RunAndRender);
         }
 
-        return [_content];
+        return _currentContent;
     }
 
-    private void RunAndRender()
+    private async Task RunAndRender()
     {
         try
         {
-            var timeout = _manifest.TimeoutMs is > 0 ? _manifest.TimeoutMs!.Value : PaletteShellSettingsManager.Instance.DefaultTimeoutMs;
+            // Elevated scripts can't have their output captured, so an elevated script never
+            // reaches Markdown mode (the compatibility gate blocks it) — the plan's RequiresAdmin
+            // is false here. Awaited rather than blocked on so the run doesn't pin a threadpool thread.
+            var result = await ScriptExecutionService.RunAsync(_plan, _args);
 
-            // Elevated scripts can't have their output captured, so Markdown mode
-            // always runs unelevated to be able to render the result.
-            var result = ScriptRunner.RunScriptAndWait(
-                scriptPath: _scriptPath,
-                args: _args,
-                host: _host,
-                cwd: _cwd,
-                env: _env,
-                requiresAdmin: false,
-                timeoutMs: timeout);
-
-            _content.Body = FormatResult(result);
+            SetContent(FormatResult(result));
         }
         catch (Exception ex)
         {
-            _content.Body = $"**Error running script**\n\n```\n{ex.Message}\n```";
+            SetContent(new ScriptFailureForm(_scriptPath, _plan.Host, _args, ex));
         }
         finally
         {
@@ -94,24 +81,20 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
         }
     }
 
-    private static string FormatResult(ScriptRunner.ScriptResult? result)
+    private IContent FormatResult(ScriptRunner.ScriptResult? result)
     {
-        if (result is null)
-            return "_Failed to start script._";
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return new ScriptFailureForm(_scriptPath, _plan.Host, _args, result);
 
-        if (result.TimedOut)
-            return "_Script timed out._";
-
-        if (result.ExitCode != 0)
-        {
-            var error = result.StandardError?.Trim();
-            return string.IsNullOrEmpty(error)
-                ? $"**Script failed with exit code {result.ExitCode}.**"
-                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
-        }
-
-        return string.IsNullOrWhiteSpace(result.StandardOutput)
+        _content.Body = string.IsNullOrWhiteSpace(result.StandardOutput)
             ? "_Script completed with no output._"
             : result.StandardOutput!;
+        return _content;
+    }
+
+    private void SetContent(IContent content)
+    {
+        _currentContent = [content];
+        RaiseItemsChanged();
     }
 }

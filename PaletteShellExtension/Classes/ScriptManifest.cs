@@ -10,7 +10,31 @@ public sealed class ScriptManifest
     public List<ScriptParameter> Parameters { get; set; } = [];
 
     public string? Group { get; set; }
+    public List<string> Tags { get; set; } = [];
     public string? IconGlyph { get; set; }
+
+    // Script-authored version from [ScriptVersion('x')] (recommended SemVer). Defaults to "1.0.0"
+    // when a script omits it (see PowerShellScriptParser) so every manifest stays comparable
+    // rather than making callers special-case a null. Lets tooling detect when a newer copy of a
+    // script is available.
+    public string? Version { get; set; }
+
+    // Minimum PaletteShell app version (SemVer) required to run this script. A script that
+    // omits [RequiresPaletteShellMinimum(...)] defaults to "0.0.6" (see PowerShellScriptParser)
+    // rather than staying null, so this is only null when parsing raw content that skips that
+    // default (e.g. via ParseScriptAttributes directly in a test).
+    public string? MinVersion { get; set; }
+
+    // Maximum PaletteShell app version (SemVer) this script still works on, from
+    // [RequiresPaletteShellMaximum(...)]. Unlike MinVersion, unset means "no ceiling" - most
+    // scripts don't rely on behavior later removed, so null (rather than a defaulted baseline)
+    // is the correct default here.
+    public string? MaxVersion { get; set; }
+
+    // Modules the script needs installed, from one or more [RequiresModule('Name')] attributes.
+    // Checked at run time (a preflight in the PowerShell command): a missing module fails the
+    // run with an Install-Module hint rather than the script's own cryptic "term not recognized".
+    public List<string> RequiredModules { get; set; } = [];
 
     public bool? RequiresAdmin { get; set; }
 

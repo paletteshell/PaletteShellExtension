@@ -85,7 +85,7 @@ public class PowerShellScriptParserTests
     [InlineData("[long]$P", "int")]
     [InlineData("[double]$P", "number")]
     [InlineData("[decimal]$P", "number")]
-    [InlineData("[switch]$P", "bool")]
+    [InlineData("[switch]$P", "switch")] // presence-based flag; distinct UI type from [bool]
     [InlineData("[bool]$P", "bool")]
     [InlineData("$P", "string")] // no type constraint at all
     public void ParameterType_MapsToUiType(string declaration, string expectedUiType)
@@ -338,6 +338,86 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
+    public void ScriptTags_IsParsedAsCommaDelimitedList()
+    {
+        using var file = new TestScriptFile("[ScriptTags('network, dns,admin')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal(["network", "dns", "admin"], manifest!.Tags);
+    }
+
+    [Fact]
+    public void ScriptTags_Absent_YieldsEmptyList()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Empty(manifest!.Tags);
+    }
+
+    [Fact]
+    public void ScriptVersion_IsParsed()
+    {
+        using var file = new TestScriptFile("[ScriptVersion('1.2.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.2.0", manifest!.Version);
+    }
+
+    [Fact]
+    public void ScriptVersion_WhenOmitted_DefaultsTo1_0_0()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.0.0", manifest!.Version);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMinimum_IsParsed()
+    {
+        using var file = new TestScriptFile("[RequiresPaletteShellMinimum('1.2.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("1.2.0", manifest!.MinVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMinimum_WhenOmitted_DefaultsTo0_0_6()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("0.0.6", manifest!.MinVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMaximum_IsParsed()
+    {
+        using var file = new TestScriptFile("[RequiresPaletteShellMaximum('2.0.0')]\nparam()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Equal("2.0.0", manifest!.MaxVersion);
+    }
+
+    [Fact]
+    public void RequiresPaletteShellMaximum_WhenOmitted_StaysNull()
+    {
+        using var file = new TestScriptFile("param()");
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.Null(manifest!.MaxVersion);
+    }
+
+    [Fact]
     public void ScriptEnv_MultipleAttributes_AllCaptured()
     {
         using var file = new TestScriptFile("""
@@ -436,14 +516,89 @@ public class PowerShellScriptParserTests
     }
 
     [Fact]
-    public void UnbalancedParamBlock_DoesNotThrow_AndYieldsNoParameters()
+    public void UnbalancedParamBlock_FailsClosed_WithDiagnostic()
     {
+        // A param block with no matching ')' is malformed. It must NOT parse as a parameterless
+        // script (which could launch fire-and-forget with the real params never reaching
+        // PowerShell) — it fails closed so the caller shows a repair row.
         using var file = new TestScriptFile("param(\n    [string]$Name");
 
-        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+        var result = PowerShellScriptParser.TryParse(file.Path);
 
-        Assert.NotNull(manifest);
-        Assert.Empty(manifest!.Parameters);
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+        Assert.Null(PowerShellScriptParser.TryParseManifest(file.Path));
+    }
+
+    [Fact]
+    public void UnbalancedAttributeBracket_FailsClosed()
+    {
+        // An attribute above param(...) with no closing ']' can't be scoped safely.
+        using var file = new TestScriptFile("[ConfirmBeforeRun('sure?'\nparam(\n    [string]$Name\n)");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void UnbalancedSafetyAttribute_NoParamBlock_FailsClosed()
+    {
+        // A recognized safety attribute with no closing ']' and no param() block would otherwise
+        // be dropped silently, losing its elevation gate. Must fail closed.
+        using var file = new TestScriptFile("[RequiresElevation(\nRemove-Item C:\\temp -Recurse");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void OrdinaryBodyBrackets_NoParamBlock_DoNotFailClosed()
+    {
+        // Type accelerators and indexing must not be mistaken for malformed attributes.
+        using var file = new TestScriptFile("$a = @(1,2,3)\n[int]$b = $a[0]\nWrite-Output \"$b]\"");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.NotNull(result.Manifest);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void UnknownOutputMode_FailsClosed()
+    {
+        using var file = new TestScriptFile("[ScriptOutput('Bogus')]\nparam()");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void NonNumericTimeout_FailsClosed()
+    {
+        using var file = new TestScriptFile("[ScriptTimeout('soon')]\nparam()");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.Null(result.Manifest);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void WellFormedScript_HasNoErrorsAndNotTruncated()
+    {
+        using var file = new TestScriptFile("[ScriptOutput('Clipboard')]\nparam(\n    [string]$Name = 'x'\n)");
+
+        var result = PowerShellScriptParser.TryParse(file.Path);
+
+        Assert.NotNull(result.Manifest);
+        Assert.False(result.HasErrors);
+        Assert.False(result.WasTruncated);
     }
 
     // ----- Path token expansion ---------------------------------------------------------------
@@ -526,5 +681,35 @@ public class PowerShellScriptParserTests
         var result = PowerShellScriptParser.ResolveCwd("{ScriptDir}", file.Path);
 
         Assert.Equal(expectedDir, result);
+    }
+
+    // ----- Metadata read cap --------------------------------------------------------------
+
+    [Fact]
+    public void LargeScript_MetadataAtTop_StillParses()
+    {
+        // The parser caps its read at the head of the file; a script with a huge body must
+        // still have its header metadata (help, attributes, params) parsed correctly.
+        var header = """
+            <#
+            .SYNOPSIS
+            Big Script
+            #>
+            [ScriptOutput('Clipboard')]
+            param(
+                [string]$Name = 'x'
+            )
+
+            """;
+        var body = string.Concat(Enumerable.Repeat("Write-Output 'padding line to inflate the body well past the metadata read cap'\n", 5000));
+        using var file = new TestScriptFile(header + body);
+
+        var manifest = PowerShellScriptParser.TryParseManifest(file.Path);
+
+        Assert.NotNull(manifest);
+        Assert.Equal("Big Script", manifest!.Title);
+        Assert.Equal("Clipboard", manifest.Output);
+        Assert.Single(manifest.Parameters);
+        Assert.Equal("Name", manifest.Parameters[0].Name);
     }
 }

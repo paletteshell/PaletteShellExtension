@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -11,8 +11,9 @@ using module .\PaletteScriptAttributes.psm1
 .PARAMETER OlderThanDays
     Only delete files last modified more than this many days ago.
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('System')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🧹')]
 [ScriptTimeout(60000)]
 [ScriptOutput('Toast')]

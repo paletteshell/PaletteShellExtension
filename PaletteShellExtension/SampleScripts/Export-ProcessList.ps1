@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,8 +6,9 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Snapshot running processes (name, PID, memory, CPU) as CSV and open it in the editor / Excel
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('📊')]
 [ScriptTimeout(15000)]
 [ScriptOutput('File:csv')]

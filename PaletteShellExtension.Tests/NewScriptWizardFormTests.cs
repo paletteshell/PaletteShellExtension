@@ -1,4 +1,5 @@
 using System.IO;
+using PaletteShellExtension.Classes;
 using PaletteShellExtension.Forms;
 using Xunit;
 
@@ -44,6 +45,7 @@ public class NewScriptWizardFormTests
             Assert.Equal(45000, manifest.TimeoutMs);
             Assert.True(manifest.RequiresAdmin);
             Assert.Equal("Are you sure?", manifest.ConfirmMessage);
+            Assert.Equal(AppVersion.Current.ToString(), manifest.MinVersion);
         }
         finally
         {

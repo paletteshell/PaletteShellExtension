@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -6,8 +6,9 @@ using module .\PaletteScriptAttributes.psm1
 .DESCRIPTION
     Generate current Unix timestamp and copy to clipboard
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('⏰')]
 [ScriptTimeout(5000)]
 [ScriptOutput('None')]

@@ -1,58 +1,83 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 
 namespace PaletteShellExtension.Classes;
 
 /// <summary>
-/// Turns a script's captured stdout into a <see cref="CommandResult"/> according to its
-/// declared <c>[ScriptOutput(...)]</c> mode. Markdown is intentionally not handled here —
-/// it renders into a page and is routed by the caller before this is reached.
+/// Low-level helpers for acting on a script's captured stdout per its declared
+/// <c>[ScriptOutput(...)]</c> mode — set the clipboard, open a target, decide whether a target is
+/// safe to open unprompted. The mode dispatch itself lives in <see cref="ScriptRunDispatcher"/>,
+/// which runs on the async execution surfaces (never on the host's blocking COM call).
 /// </summary>
 internal static class ScriptOutputHandler
 {
-    public static CommandResult ToResult(string? mode, string? output, string? fileExtension = null, string? fileBaseName = null)
-    {
-        switch (mode?.Trim().ToLowerInvariant())
-        {
-            case "clipboard":
-                if (!string.IsNullOrEmpty(output))
-                {
-                    TrySetClipboard(output);
-                    return CommandResult.ShowToast("Copied to clipboard");
-                }
-                return CommandResult.ShowToast("Script completed");
-
-            // Write stdout to a temp file and open it in the user's editor. Useful for
-            // output that's too large or structured to be readable in a toast.
-            case "file":
-                if (!string.IsNullOrEmpty(output))
-                {
-                    EditorLauncher.OpenContent(output, fileExtension, fileBaseName);
-                    return CommandResult.ShowToast("Opened output in editor");
-                }
-                return CommandResult.ShowToast("Script completed");
-
-            // Run silently: confirm completion without surfacing the output.
-            case "none":
-                return CommandResult.ShowToast("Script completed");
-
-            // "toast" (and any unrecognized value) surfaces the captured output.
-            default:
-                return !string.IsNullOrEmpty(output)
-                    ? CommandResult.ShowToast(output)
-                    : CommandResult.ShowToast("Script completed");
-        }
-    }
-
-    private static void TrySetClipboard(string text)
+    internal static CommandResult OpenTarget(string target)
     {
         try
         {
-            TextCopy.ClipboardService.SetText(text ?? "");
+            Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            return CommandResult.ShowToast("Opened script output");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Failed to open script output target '{target}': {ex.Message}");
+            return CommandResult.ShowToast($"Couldn't open script output: {ex.Message}");
+        }
+    }
+
+    // Open without prompting only for web links and real files/folders on disk. .lnk
+    // shortcuts are excluded even when they exist: launching one runs whatever it points at.
+    internal static bool IsSafeOpenTarget(string target)
+    {
+        if (Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return true;
+        }
+
+        if (target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            return File.Exists(target) || Directory.Exists(target);
+        }
+        catch
+        {
+            // Malformed path (bad chars, too long) — treat as unsafe and let the confirm show it.
+            return false;
+        }
+    }
+
+    internal static string? GetOpenTarget(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return null;
+        }
+
+        return output
+            .Replace("\r\n", "\n")
+            .Split('\n')
+            .Select(line => line.Trim().Trim('"'))
+            .FirstOrDefault(line => line.Length > 0);
+    }
+
+    internal static void TrySetClipboard(string text)
+    {
+        try
+        {
+            ClipboardHelper.SetText(text);
         }
         catch (Exception ex)
         {
             Log.Warn($"Failed to set clipboard text: {ex.Message}");
+            throw;
         }
     }
 }

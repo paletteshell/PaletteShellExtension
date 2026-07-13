@@ -1,4 +1,4 @@
-using module .\PaletteScriptAttributes.psm1
+﻿using module .\PaletteScriptAttributes.psm1
 
 <#
 .SYNOPSIS
@@ -19,8 +19,9 @@ using module .\PaletteScriptAttributes.psm1
     .\Text-Transform.ps1 -Operation "Quote" -Prefix '"' -Suffix '"'
     Wraps each line in double quotes
 #>
-[ScriptHost('pwsh')]
+[ScriptHost('auto')]
 [ScriptGroup('Text Utilities')]
+[ScriptVersion('1.0.0')]
 [ScriptIcon('🔄')]
 [ScriptTimeout(15000)]
 [ScriptOutput('None')]

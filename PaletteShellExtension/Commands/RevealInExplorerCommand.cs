@@ -1,4 +1,6 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using PaletteShellExtension.Classes;
+using System;
 using System.Diagnostics;
 using System.IO;
 
@@ -17,7 +19,15 @@ internal sealed partial class RevealInExplorerCommand(string path) : InvokableCo
     {
         if (File.Exists(path))
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Failed to reveal '{path}' in Explorer: {ex.Message}");
+                return CommandResult.ShowToast($"Couldn't reveal in File Explorer: {ex.Message}");
+            }
         }
 
         return CommandResult.Dismiss();

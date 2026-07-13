@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -25,6 +26,12 @@ internal sealed class PinnedScripts
     private readonly string _rootDirectory;
     private readonly string _storePath;
     private readonly HashSet<string> _pinned;
+
+    // Memoizes path → store key: IsPinned runs once or twice per script per list rebuild
+    // (including from GetItems' parallel loop, hence concurrent), and the relative-path
+    // computation is the only non-trivial part. Entries are never invalidated — a path's
+    // key is a pure function of it and this instance's fixed root.
+    private readonly ConcurrentDictionary<string, string> _keyCache = new(StringComparer.OrdinalIgnoreCase);
 
     public PinnedScripts(string rootDirectory)
     {
@@ -53,9 +60,11 @@ internal sealed class PinnedScripts
     // Path relative to the scripts root, normalized to forward slashes so the stored key
     // doesn't depend on the platform separator (e.g. "Git/Sync.ps1").
     private string KeyFor(string path) =>
-        Path.GetRelativePath(_rootDirectory, path)
-            .Replace(Path.DirectorySeparatorChar, '/')
-            .Replace(Path.AltDirectorySeparatorChar, '/');
+        _keyCache.GetOrAdd(path, static (p, root) =>
+            Path.GetRelativePath(root, p)
+                .Replace(Path.DirectorySeparatorChar, '/')
+                .Replace(Path.AltDirectorySeparatorChar, '/'),
+            _rootDirectory);
 
     private static HashSet<string> Load(string storePath)
     {
