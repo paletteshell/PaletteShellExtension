@@ -162,7 +162,8 @@ internal sealed partial class ScriptListPage : DynamicListPage
         {
             if (!cancellationToken.IsCancellationRequested)
             {
-                _items = [Message($"Error running script: {ex.Message}")];
+                var args = _queryParam is null ? "" : ScriptArgumentBuilder.BuildQueryArg(_queryParam, query);
+                _items = [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, args, ex)];
             }
         }
         finally

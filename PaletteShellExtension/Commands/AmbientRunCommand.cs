@@ -40,5 +40,5 @@ internal sealed partial class AmbientRunCommand(string path, ScriptManifest mani
     }
 
     private CommandResult RunNow()
-        => AmbientRunner.RunAndToast(plan, manifest, Path.GetFileNameWithoutExtension(path));
+        => AmbientRunner.RunAndToast(plan, manifest);
 }

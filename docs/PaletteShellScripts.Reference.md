@@ -96,7 +96,7 @@ Defined in `PaletteScriptAttributes.psm1`. Only these are recognized; anything e
 
 Set with `[ScriptOutput('<mode>')]`. Default is `None`. Modes have two **dispositions**:
 
-**Ambient (fire-and-forget)** — perform the side effect, show a toast, and **dismiss the palette**. For quick scripts whose payoff is external or nil.
+**Ambient (fire-and-forget)** — perform the side effect, show a success toast, and **dismiss the palette**. For quick scripts whose payoff is external or nil.
 
 | Mode | Behavior |
 |------|----------|
@@ -117,6 +117,8 @@ Set with `[ScriptOutput('<mode>')]`. Default is `None`. Modes have two **disposi
 Anything other than `None`-with-no-`[ScriptTimeout]` makes PaletteShell **wait** for the process,
 up to the timeout (30s default) before killing it. So: emit results on **stdout** (`Write-Host` /
 `Write-Output` are captured), keep the run under the timeout, and exit non-zero on failure.
+Waited failures use the shared failure dialog/action with **View details** instead of a transient
+toast, regardless of output mode.
 
 Ambient scripts run synchronously and hold the palette until they finish, so keep them **quick**;
 anything slow or with rich output belongs in a display mode (`Markdown`/`Result`/`List`).

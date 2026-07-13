@@ -47,6 +47,6 @@ internal sealed partial class RunScriptCommand(string path, ScriptManifest? mani
         var started = ScriptExecutionService.RunFireAndForget(plan);
         return started
             ? AmbientRunner.Toast("Script completed")
-            : ScriptFailurePresenter.ToCommandResult(path, plan.Host, "", null);
+            : ScriptFailurePresenter.ToCommandResult(path, plan.Host, "", (ScriptRunner.ScriptResult?)null);
     }
 }

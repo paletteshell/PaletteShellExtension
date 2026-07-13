@@ -72,7 +72,7 @@ Short version:
 - Put `using module .\PaletteScriptAttributes.psm1` on line 1.
 - Put all `[Script*]` attributes above `param(...)`.
 - Provide `.SYNOPSIS`, `.DESCRIPTION`, and `.PARAMETER` help.
-- Emit results on stdout for output modes that capture output.
+- Emit results on stdout for output modes that capture output; exit non-zero so failures open the shared details flow.
 - Use clipboard, defaults, dropdowns, or live list providers instead of several heavy form inputs.
 
 ## License

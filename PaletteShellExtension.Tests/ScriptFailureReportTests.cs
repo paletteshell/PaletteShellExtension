@@ -1,3 +1,4 @@
+using System;
 using PaletteShellExtension.Classes;
 using Xunit;
 
@@ -8,7 +9,7 @@ public class ScriptFailureReportTests
     [Fact]
     public void DescribeOutcome_NullResult_SaysFailedToStart()
     {
-        Assert.Equal("failed to start", ScriptFailureReport.DescribeOutcome(null));
+        Assert.Equal("failed to start", ScriptFailureReport.DescribeOutcome((ScriptRunner.ScriptResult?)null));
     }
 
     [Fact]
@@ -50,7 +51,7 @@ public class ScriptFailureReportTests
     [Fact]
     public void Build_NullResult_SaysFailedToStartWithEmptyStreams()
     {
-        var report = ScriptFailureReport.Build(@"C:\Scripts\foo.ps1", "pwsh", "", null);
+        var report = ScriptFailureReport.Build(@"C:\Scripts\foo.ps1", "pwsh", "", (ScriptRunner.ScriptResult?)null);
 
         Assert.Contains("failed to start", report);
         Assert.Contains("Args:     (none)", report);
@@ -66,6 +67,28 @@ public class ScriptFailureReportTests
 
         Assert.Contains("timed out and was killed", report);
         Assert.Contains("Duration: 30000 ms", report);
+    }
+
+    [Fact]
+    public void DescribeOutcome_Exception_IncludesMessage()
+    {
+        var exception = new InvalidOperationException("clipboard unavailable");
+
+        Assert.Equal("failed: clipboard unavailable", ScriptFailureReport.DescribeOutcome(exception));
+    }
+
+    [Fact]
+    public void Build_ExceptionFailure_IncludesPathArgsAndException()
+    {
+        var exception = new InvalidOperationException("clipboard unavailable");
+
+        var report = ScriptFailureReport.Build(@"C:\Scripts\foo.ps1", "pwsh", "-Token 'secret'", exception);
+
+        Assert.Contains(@"C:\Scripts\foo.ps1", report);
+        Assert.Contains("-Token '***'", report);
+        Assert.Contains("failed: clipboard unavailable", report);
+        Assert.Contains("InvalidOperationException", report);
+        Assert.DoesNotContain("secret", report);
     }
 
     [Fact]

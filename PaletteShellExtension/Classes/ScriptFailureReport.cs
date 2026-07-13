@@ -42,6 +42,11 @@ internal static class ScriptFailureReport
         return $"exited with code {result.ExitCode}";
     }
 
+    /// <summary>One-line outcome for failures that happen outside the completed script process:
+    /// launcher exceptions, runner exceptions, or output side-effect failures.</summary>
+    public static string DescribeOutcome(Exception exception) =>
+        $"failed: {exception.Message}";
+
     /// <summary>
     /// Full failure report: script path, resolved shell, args, outcome, duration (when
     /// known), and the complete stderr and stdout streams.
@@ -69,6 +74,33 @@ internal static class ScriptFailureReport
         sb.AppendLine();
         sb.AppendLine("----- stdout -----");
         sb.AppendLine(ContentOrPlaceholder(result?.StandardOutput));
+        sb.AppendLine();
+        sb.AppendLine(culture, $"Logs: {Log.LogDirectory}");
+        sb.AppendLine(culture, $"This report: {EditorLauncher.OutputDirectory} (auto-cleaned when enabled in settings)");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Full failure report for failures that happen before or after a script result exists, such as
+    /// process-launch exceptions or output-mode side-effect failures.
+    /// </summary>
+    public static string Build(string scriptPath, string host, string args, Exception exception)
+    {
+        var name = Path.GetFileNameWithoutExtension(scriptPath);
+        var sb = new StringBuilder();
+        var culture = CultureInfo.InvariantCulture;
+
+        sb.AppendLine(culture, $"Script failure report — {name}");
+        sb.AppendLine(culture, $"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine();
+        sb.AppendLine(culture, $"Script:   {scriptPath}");
+        sb.AppendLine(culture, $"Shell:    {ScriptRunner.DescribeShell(host)}");
+        sb.AppendLine(culture, $"Args:     {(string.IsNullOrWhiteSpace(args) ? "(none)" : RedactArgs(args))}");
+        sb.AppendLine(culture, $"Outcome:  {DescribeOutcome(exception)}");
+        sb.AppendLine();
+        sb.AppendLine("----- exception -----");
+        sb.AppendLine(exception.ToString());
         sb.AppendLine();
         sb.AppendLine(culture, $"Logs: {Log.LogDirectory}");
         sb.AppendLine(culture, $"This report: {EditorLauncher.OutputDirectory} (auto-cleaned when enabled in settings)");

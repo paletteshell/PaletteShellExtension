@@ -34,7 +34,7 @@ param(
 - Put every `[Script*]` attribute above `param(...)`.
 - Use a `<# ... #>` help block with `.SYNOPSIS`, `.DESCRIPTION`, and `.PARAMETER` entries.
 - Save as UTF-8 with BOM when the script contains emoji or may run under Windows PowerShell 5.1.
-- Emit captured results on stdout and exit non-zero on failure.
+- Emit captured results on stdout and exit non-zero on failure; waited failures surface through the shared failure dialog/action.
 - Scripts live at the top level of the scripts folder; subfolders are not scanned.
 - Changes appear after the user runs `Reload scripts`.
 

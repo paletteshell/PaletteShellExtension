@@ -85,7 +85,7 @@ internal sealed partial class ScriptResultPage : ListPage
         }
         catch (Exception ex)
         {
-            _items = [Message($"Error running script: {ex.Message}")];
+            _items = [ScriptFailurePresenter.ToListItem(_scriptPath, _plan.Host, "", ex)];
         }
         finally
         {

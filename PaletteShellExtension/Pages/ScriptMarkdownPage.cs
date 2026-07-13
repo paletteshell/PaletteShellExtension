@@ -1,6 +1,7 @@
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
+using PaletteShellExtension.Forms;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,8 +15,10 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
 {
     private readonly ScriptExecutionPlan _plan;
     private readonly string _args;
+    private readonly string _scriptPath;
 
     private readonly MarkdownContent _content = new();
+    private IContent[] _currentContent;
 
     // A script run is in flight; ignore re-entrant content fetches while it is.
     private bool _running;
@@ -26,8 +29,10 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
         ScriptExecutionPlan plan,
         string args = "")
     {
+        _scriptPath = scriptPath;
         _plan = plan;
         _args = args;
+        _currentContent = [_content];
 
         Title = manifest.Title ?? Path.GetFileNameWithoutExtension(scriptPath);
         Name = "Run";
@@ -51,7 +56,7 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
             _ = Task.Run(RunAndRender);
         }
 
-        return [_content];
+        return _currentContent;
     }
 
     private async Task RunAndRender()
@@ -63,11 +68,11 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
             // is false here. Awaited rather than blocked on so the run doesn't pin a threadpool thread.
             var result = await ScriptExecutionService.RunAsync(_plan, _args);
 
-            _content.Body = FormatResult(result);
+            SetContent(FormatResult(result));
         }
         catch (Exception ex)
         {
-            _content.Body = $"**Error running script**\n\n```\n{ex.Message}\n```";
+            SetContent(new ScriptFailureForm(_scriptPath, _plan.Host, _args, ex));
         }
         finally
         {
@@ -76,24 +81,20 @@ internal sealed partial class ScriptMarkdownPage : ContentPage
         }
     }
 
-    private static string FormatResult(ScriptRunner.ScriptResult? result)
+    private IContent FormatResult(ScriptRunner.ScriptResult? result)
     {
-        if (result is null)
-            return "_Failed to start script._";
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return new ScriptFailureForm(_scriptPath, _plan.Host, _args, result);
 
-        if (result.TimedOut)
-            return "_Script timed out._";
-
-        if (result.ExitCode != 0)
-        {
-            var error = result.StandardError?.Trim();
-            return string.IsNullOrEmpty(error)
-                ? $"**Script failed with exit code {result.ExitCode}.**"
-                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
-        }
-
-        return string.IsNullOrWhiteSpace(result.StandardOutput)
+        _content.Body = string.IsNullOrWhiteSpace(result.StandardOutput)
             ? "_Script completed with no output._"
             : result.StandardOutput!;
+        return _content;
+    }
+
+    private void SetContent(IContent content)
+    {
+        _currentContent = [content];
+        RaiseItemsChanged();
     }
 }

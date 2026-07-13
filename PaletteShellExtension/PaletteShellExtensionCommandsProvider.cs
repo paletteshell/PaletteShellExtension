@@ -5,6 +5,7 @@
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
+using PaletteShellExtension.Pages;
 using System;
 
 namespace PaletteShellExtension;
@@ -45,5 +46,4 @@ public partial class PaletteShellExtensionCommandsProvider : CommandProvider
     {
         return _commands;
     }
-
 }

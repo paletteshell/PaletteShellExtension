@@ -77,6 +77,7 @@ internal static class ScriptOutputHandler
         catch (Exception ex)
         {
             Log.Warn($"Failed to set clipboard text: {ex.Message}");
+            throw;
         }
     }
 }

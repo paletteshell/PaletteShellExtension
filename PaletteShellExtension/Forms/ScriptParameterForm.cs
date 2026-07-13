@@ -1,3 +1,4 @@
+using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using PaletteShellExtension.Classes;
 using PaletteShellExtension.Commands;
@@ -14,7 +15,7 @@ internal sealed class ScriptParameterForm : FormContent
     private readonly string _scriptPath;
     private readonly ScriptManifest _manifest;
     private readonly ScriptExecutionPlan _plan;
-    private readonly Action<string>? _onMarkdown;
+    private readonly Action<IContent>? _onContent;
     private readonly Action? _onRunStarted;
     private readonly Action? _onRunFinished;
 
@@ -22,7 +23,7 @@ internal sealed class ScriptParameterForm : FormContent
         string scriptPath,
         ScriptManifest manifest,
         ScriptExecutionPlan plan,
-        Action<string>? onMarkdown = null,
+        Action<IContent>? onContent = null,
         Action? onRunStarted = null,
         Action? onRunFinished = null)
     {
@@ -30,7 +31,7 @@ internal sealed class ScriptParameterForm : FormContent
         _scriptPath = scriptPath;
         _manifest = manifest;
         _plan = plan;
-        _onMarkdown = onMarkdown;
+        _onContent = onContent;
         _onRunStarted = onRunStarted;
         _onRunFinished = onRunFinished;
 
@@ -110,8 +111,7 @@ internal sealed class ScriptParameterForm : FormContent
     /// <see cref="AmbientRunner"/>); shared with the no-parameter <see cref="Commands.AmbientRunCommand"/>.</summary>
     private CommandResult StartAmbientRun(string argsLine)
     {
-        var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
-        return AmbientRunner.RunAndToast(_plan, _manifest, scriptName, argsLine);
+        return AmbientRunner.RunAndToast(_plan, _manifest, argsLine);
     }
 
     /// <summary>Runs the script on a background thread so the host's submit COM call returns at
@@ -125,20 +125,20 @@ internal sealed class ScriptParameterForm : FormContent
 
         _ = Task.Run(async () =>
         {
-            string body;
+            IContent content;
             try
             {
                 var result = await ScriptExecutionService.RunAsync(_plan, argsLine);
-                body = FormatAsyncResult(result);
+                content = FormatAsyncResult(result, argsLine);
             }
             catch (Exception ex)
             {
-                body = $"**Error running script**\n\n```\n{ex.Message}\n```";
+                content = new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, ex);
             }
 
             try
             {
-                _onMarkdown?.Invoke(body);
+                _onContent?.Invoke(content);
             }
             finally
             {
@@ -153,24 +153,23 @@ internal sealed class ScriptParameterForm : FormContent
     /// inline (with stderr); a success performs the declared output effect via
     /// <see cref="ScriptRunDispatcher"/> and shows its status (or the rendered output for
     /// Markdown/Toast modes).</summary>
-    private string FormatAsyncResult(ScriptRunner.ScriptResult? result)
+    private IContent FormatAsyncResult(ScriptRunner.ScriptResult? result, string argsLine)
     {
-        if (result is null)
-            return "_Failed to start script._";
-
-        if (result.TimedOut)
-            return "_Script timed out._";
-
-        if (result.ExitCode != 0)
-        {
-            var error = result.StandardError?.Trim();
-            return string.IsNullOrEmpty(error)
-                ? $"**Script failed with exit code {result.ExitCode}.**"
-                : $"**Script failed with exit code {result.ExitCode}.**\n\n```\n{error}\n```";
-        }
+        if (result is null || result.TimedOut || result.ExitCode != 0)
+            return new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, result);
 
         var scriptName = System.IO.Path.GetFileNameWithoutExtension(_scriptPath);
-        return ScriptRunDispatcher.Apply(_manifest, result.StandardOutput, scriptName).Status;
+        try
+        {
+            return new MarkdownContent
+            {
+                Body = ScriptRunDispatcher.Apply(_manifest, result.StandardOutput, scriptName).Status
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ScriptFailureForm(_scriptPath, _plan.Host, argsLine, ex);
+        }
     }
 
     /// <summary>Launches an elevated script fire-and-forget. Elevated scripts can't have their
@@ -181,7 +180,7 @@ internal sealed class ScriptParameterForm : FormContent
         var started = ScriptExecutionService.RunFireAndForget(_plan, argsLine);
         return started
             ? AmbientRunner.Toast("Script completed")
-            : ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, null);
+            : ScriptFailurePresenter.ToCommandResult(_scriptPath, _plan.Host, argsLine, (ScriptRunner.ScriptResult?)null);
     }
 
     /// <summary>Returns the label/name of each required parameter whose submitted value is

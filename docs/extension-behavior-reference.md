@@ -64,10 +64,12 @@ If a script declares `[ConfirmBeforeRun('message')]`, selecting it first shows a
 
 Output modes fall into two **dispositions** by where the result lives:
 
-- **Ambient / fire-and-forget** (`None`, `Toast`, `Clipboard`, `Open`, `File`) — the payoff is external or nil (a file/URL opens, the clipboard is set, or nothing). PaletteShell performs the side effect, shows a toast, and **dismisses the palette**. These are for quick scripts.
+- **Ambient / fire-and-forget** (`None`, `Toast`, `Clipboard`, `Open`, `File`) — the payoff is external or nil (a file/URL opens, the clipboard is set, or nothing). PaletteShell performs the side effect, shows a success toast, and **dismisses the palette**. These are for quick scripts.
 - **In-palette / display** (`Markdown`, `Result`, `List`) — the payoff is text worth reading, so PaletteShell opens a page that **stays open** and renders it.
 
 PaletteShell waits (up to the declared timeout, or the [default timeout setting](#settings), 30s unless changed) and captures stdout/stderr for every mode except pure `None` with no `[ScriptTimeout]`, which is launched fire-and-forget without waiting.
+
+If a waited run fails to start, times out, exits non-zero, or cannot complete its output side effect, PaletteShell surfaces the failure through the shared failure dialog/action instead of a transient toast. The dialog includes a short summary and a **View details** action that opens the full failure report.
 
 | Condition | Behavior |
 |-----------|----------|
