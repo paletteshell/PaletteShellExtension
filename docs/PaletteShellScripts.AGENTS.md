@@ -40,7 +40,7 @@ param(
 
 ## Common Attributes
 
-- `[ScriptHost('pwsh')]` or `[ScriptHost('powershell')]`
+- `[ScriptHost('pwsh')]`, `[ScriptHost('powershell')]`, or `[ScriptHost('path\to\pwsh.exe')]`
 - `[ScriptOutput('None'|'Toast'|'Clipboard'|'Markdown'|'Result'|'List'|'Open'|'File[:ext]')]`
 - `[ScriptIcon('...')]`
 - `[ScriptTimeout(30000)]`

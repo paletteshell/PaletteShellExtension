@@ -74,4 +74,44 @@ public class ScriptRunnerTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void ParseHost_RecognizesStandardAndCustomPaths()
+    {
+        Assert.Equal(ScriptRunner.ShellHost.Auto, ScriptRunner.ParseHost("auto"));
+        Assert.Equal(ScriptRunner.ShellHost.Auto, ScriptRunner.ParseHost(null));
+        Assert.Equal(ScriptRunner.ShellHost.Pwsh, ScriptRunner.ParseHost("pwsh"));
+        Assert.Equal(ScriptRunner.ShellHost.WindowsPowerShell, ScriptRunner.ParseHost("powershell"));
+        Assert.Equal(ScriptRunner.ShellHost.CustomPath, ScriptRunner.ParseHost(@"C:\Users\User\AppData\Local\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe\pwsh.exe"));
+        Assert.Equal(ScriptRunner.ShellHost.CustomPath, ScriptRunner.ParseHost("pwsh.exe"));
+        Assert.Equal(ScriptRunner.ShellHost.Unknown, ScriptRunner.ParseHost("bash"));
+    }
+
+    [Fact]
+    public void ResolveShell_CustomPath_ResolvesExistingOrThrows()
+    {
+        var tempExe = Path.GetTempFileName();
+        try
+        {
+            var resolved = ScriptRunner.ResolveShell(tempExe);
+            Assert.Equal(tempExe, resolved);
+
+            var missingExe = Path.Combine(Path.GetTempPath(), "nonexistent_pwsh_" + System.Guid.NewGuid().ToString("N") + ".exe");
+            Assert.Throws<ScriptRunner.ShellResolutionException>(() => ScriptRunner.ResolveShell(missingExe));
+        }
+        finally
+        {
+            if (File.Exists(tempExe))
+            {
+                File.Delete(tempExe);
+            }
+        }
+    }
+
+    [Fact]
+    public void PwshInstallDirs_IncludesWindowsAppsLocation()
+    {
+        var dirs = System.Linq.Enumerable.ToList(ScriptRunner.PwshInstallDirs());
+        Assert.Contains(dirs, d => d.Contains("WindowsApps", System.StringComparison.OrdinalIgnoreCase));
+    }
 }

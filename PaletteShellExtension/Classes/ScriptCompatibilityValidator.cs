@@ -51,11 +51,18 @@ internal readonly record struct ScriptCompatibility(
         if (!AppVersion.IsCompatible(manifest.MinVersion, manifest.MaxVersion, out var required, out var tooNew))
             return new ScriptCompatibility(ScriptCompatibilityKind.RequiresUpdate, required!.ToString(), tooNew);
 
-        // A declared host that parses to Unknown is a manifest error: block it here rather than
-        // let the runner pick an interpreter the script never asked for. Null means "no override"
-        // (the configured default applies), which is always a valid token.
-        if (manifest.Host is not null && ScriptRunner.ParseHost(manifest.Host) == ScriptRunner.ShellHost.Unknown)
-            return new ScriptCompatibility(ScriptCompatibilityKind.UnknownHost, BadHost: manifest.Host);
+        // A declared host that parses to Unknown (or a custom path that does not exist) is a manifest error:
+        // block it here rather than let the runner pick an interpreter the script never asked for.
+        // Null means "no override" (the configured default applies), which is always a valid token.
+        if (manifest.Host is not null)
+        {
+            var hostKind = ScriptRunner.ParseHost(manifest.Host);
+            if (hostKind == ScriptRunner.ShellHost.Unknown ||
+                (hostKind == ScriptRunner.ShellHost.CustomPath && !System.IO.File.Exists(manifest.Host.Trim())))
+            {
+                return new ScriptCompatibility(ScriptCompatibilityKind.UnknownHost, BadHost: manifest.Host);
+            }
+        }
 
         // A script whose effective host resolves to pwsh (declared, or via the default) can't run
         // if pwsh 7 isn't installed — ResolveShell would throw. Block it up front with an
