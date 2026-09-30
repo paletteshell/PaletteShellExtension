@@ -355,14 +355,7 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
             },
             new ListItem(new ReloadPageCommand(this)) { Title = "Reload scripts" },
             new ListItem(new NewScriptWizardPage(rootDirectory)) { Title = "Create new script", Subtitle = "Add a scaffolded .ps1 with metadata headers" },
-            new ListItem(new LaunchCommunityStoreCommand())
-            {
-                Title = "Browse community scripts",
-                Subtitle = "Open the Script Manager, or browse the community repo if it isn't installed",
-                MoreCommands = [
-                    new CommandContextItem(new OpenLinkCommand("View repository on GitHub", "https://github.com/paletteshell/PaletteShellScripts", "")),
-                ],
-            },
+            BuildCommunityScriptsItem(),
         ]);
 
         // Script items are sorted below: pinned scripts first, then alphabetically by their
@@ -592,6 +585,33 @@ internal sealed partial class PaletteShellExtensionPage : ListPage
 
         _cachedItems = [.. items];
         return _cachedItems;
+    }
+
+    // The "Browse community scripts" row. If the Script Manager app is installed, Enter launches
+    // it directly; if not, Enter opens a chooser page (install from Store vs. browse on GitHub)
+    // rather than presuming the user wants to install it. GitHub is always one keystroke away via
+    // the context menu regardless.
+    private static readonly CommandContextItem GitHubRepoContextItem =
+        new(new OpenLinkCommand("View repository on GitHub", "https://github.com/paletteshell/PaletteShellScripts", ""));
+
+    private static ListItem BuildCommunityScriptsItem()
+    {
+        if (LaunchCommunityStoreCommand.IsScriptManagerInstalled())
+        {
+            return new ListItem(new LaunchCommunityStoreCommand())
+            {
+                Title = "Browse community scripts",
+                Subtitle = "Open the PaletteShell Script Manager",
+                MoreCommands = [GitHubRepoContextItem],
+            };
+        }
+
+        return new ListItem(new CommunityScriptsPage())
+        {
+            Title = "Browse community scripts",
+            Subtitle = "Install the Script Manager app, or browse the community repo on GitHub",
+            MoreCommands = [GitHubRepoContextItem],
+        };
     }
 
     // Fallback glyph for scripts that don't declare their own [ScriptIcon]. Keeps the list
