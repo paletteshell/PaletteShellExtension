@@ -110,6 +110,8 @@ internal static partial class ScriptRunner
         Pwsh,
         /// <summary>Require Windows PowerShell (powershell.exe).</summary>
         WindowsPowerShell,
+        /// <summary>Direct path to a custom interpreter executable.</summary>
+        CustomPath,
         /// <summary>Unrecognized token — the script is incompatible.</summary>
         Unknown,
     }
@@ -131,13 +133,26 @@ internal static partial class ScriptRunner
             return ShellHost.Auto;
         }
 
-        return host.Trim().ToLowerInvariant() switch
+        var trimmed = host.Trim();
+        switch (trimmed.ToLowerInvariant())
         {
-            "auto" => ShellHost.Auto,
-            "pwsh" => ShellHost.Pwsh,
-            "powershell" => ShellHost.WindowsPowerShell,
-            _ => ShellHost.Unknown,
-        };
+            case "auto":
+                return ShellHost.Auto;
+            case "pwsh":
+                return ShellHost.Pwsh;
+            case "powershell":
+                return ShellHost.WindowsPowerShell;
+        }
+
+        if (trimmed.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains(Path.DirectorySeparatorChar) ||
+            trimmed.Contains(Path.AltDirectorySeparatorChar) ||
+            File.Exists(trimmed))
+        {
+            return ShellHost.CustomPath;
+        }
+
+        return ShellHost.Unknown;
     }
 
     /// <summary>
@@ -147,6 +162,7 @@ internal static partial class ScriptRunner
     /// <item>Pwsh: pwsh only — throws "PowerShell 7 is required but not installed" when missing,
     /// rather than silently downgrading a script that declared a 7-only requirement.</item>
     /// <item>WindowsPowerShell: powershell.exe only.</item>
+    /// <item>CustomPath: custom executable path (validated to exist).</item>
     /// <item>Unknown: throws — the script is incompatible.</item>
     /// </list>
     /// Each call re-resolves against the current PATH and standard install locations, so an
@@ -156,6 +172,14 @@ internal static partial class ScriptRunner
     {
         switch (ParseHost(host))
         {
+            case ShellHost.CustomPath:
+                var trimmed = host!.Trim();
+                if (File.Exists(trimmed))
+                {
+                    return trimmed;
+                }
+                throw new ShellResolutionException($"Custom script host '{host}' was not found.");
+
             case ShellHost.WindowsPowerShell:
                 return FindWindowsPowerShell()
                     ?? throw new ShellResolutionException("Windows PowerShell (powershell.exe) is required but was not found.");
@@ -173,7 +197,7 @@ internal static partial class ScriptRunner
         }
 
         string throwUnknown() =>
-            throw new ShellResolutionException($"Unknown script host '{host}'. Supported values are 'auto', 'pwsh', and 'powershell'.");
+            throw new ShellResolutionException($"Unknown script host '{host}'. Supported values are 'auto', 'pwsh', 'powershell', or an executable path.");
     }
 
     /// <summary>Best-effort interpreter name for display (the failure report) that never throws:
@@ -190,6 +214,7 @@ internal static partial class ScriptRunner
         {
             return ParseHost(host) switch
             {
+                ShellHost.CustomPath => $"{host} (not found)",
                 ShellHost.Pwsh => "pwsh.exe (not found)",
                 ShellHost.WindowsPowerShell => "powershell.exe (not found)",
                 ShellHost.Auto => "(no PowerShell found)",
@@ -198,8 +223,17 @@ internal static partial class ScriptRunner
         }
     }
 
-    /// <summary>Finds pwsh.exe on PATH or in the standard PowerShell 7+ install locations.</summary>
-    private static string? FindPwsh() => FindExecutable("pwsh.exe", PwshInstallDirs());
+    /// <summary>Finds pwsh.exe on PATH, in configured custom path, or in standard PowerShell 7+ install locations.</summary>
+    private static string? FindPwsh()
+    {
+        var custom = PaletteShellSettingsManager.Instance.CustomPowerShellPath;
+        if (!string.IsNullOrWhiteSpace(custom) && File.Exists(custom))
+        {
+            return custom;
+        }
+
+        return FindExecutable("pwsh.exe", PwshInstallDirs());
+    }
 
     // pwsh 7 detection is probed once and cached for the process so the discovery gate never
     // rescans the filesystem on a machine that will never have pwsh. The only things that trigger a
@@ -232,8 +266,8 @@ internal static partial class ScriptRunner
     private static string? FindWindowsPowerShell() => FindExecutable("powershell.exe", WindowsPowerShellInstallDirs());
 
     /// <summary>Standard install roots for PowerShell 7+: <c>%ProgramFiles%\PowerShell\&lt;version&gt;</c>
-    /// (both bitnesses) and the winget/WindowsApps shim location.</summary>
-    private static IEnumerable<string> PwshInstallDirs()
+    /// (both bitnesses) and the winget/WindowsApps shim and package locations.</summary>
+    internal static IEnumerable<string> PwshInstallDirs()
     {
         foreach (var pf in new[]
                  {
@@ -267,7 +301,26 @@ internal static partial class ScriptRunner
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrWhiteSpace(localAppData))
         {
-            yield return Path.Combine(localAppData, "Microsoft", "WindowsApps");
+            var windowsApps = Path.Combine(localAppData, "Microsoft", "WindowsApps");
+            yield return windowsApps;
+
+            if (Directory.Exists(windowsApps))
+            {
+                string[] packageDirs;
+                try
+                {
+                    packageDirs = Directory.GetDirectories(windowsApps, "Microsoft.PowerShell*");
+                }
+                catch (Exception)
+                {
+                    packageDirs = Array.Empty<string>();
+                }
+
+                foreach (var dir in packageDirs)
+                {
+                    yield return dir;
+                }
+            }
         }
     }
 
@@ -390,7 +443,10 @@ internal static partial class ScriptRunner
 
         // Always use STA mode - scripts may call clipboard functions internally
         psi.ArgumentList.Add("-STA");
-        psi.ArgumentList.Add("-NoProfile");
+        if (!PaletteShellSettingsManager.Instance.LoadPowerShellProfile)
+        {
+            psi.ArgumentList.Add("-NoProfile");
+        }
         psi.ArgumentList.Add("-ExecutionPolicy");
         psi.ArgumentList.Add("Bypass");
 

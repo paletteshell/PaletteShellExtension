@@ -69,7 +69,7 @@ Defined in `PaletteScriptAttributes.psm1`. Only these are recognized; anything e
 
 | Attribute | Purpose |
 |-----------|---------|
-| `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` (PowerShell 7, default) or `'powershell'` (Windows PowerShell 5.1) |
+| `[ScriptHost('pwsh')]` | Host to run under: `'pwsh'` (PowerShell 7, default), `'powershell'` (Windows PowerShell 5.1), or a direct executable path to a custom interpreter |
 | `[ScriptCwd('{ScriptDir}')]` | Working directory (supports path tokens, below) |
 | `[ScriptGroup('Category')]` | Group name used by tooling such as the Script Manager catalog browser |
 | `[ScriptTags('foo,bar,baz')]` | Comma-delimited free-form tags used by tooling such as the Script Manager catalog browser |

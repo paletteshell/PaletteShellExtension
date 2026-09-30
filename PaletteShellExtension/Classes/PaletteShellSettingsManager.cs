@@ -71,8 +71,27 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
         "How long to keep files in %TEMP%\\PaletteShell before auto-clean removes them.",
         DefaultCleanupDays.ToString(CultureInfo.InvariantCulture));
 
+    private readonly TextSetting _customPowerShellPath = new(
+        "customPowerShellPath",
+        "Custom PowerShell path",
+        "Optional path to a custom pwsh.exe (e.g. from Windows Terminal or a custom install). Leave blank to auto-detect.",
+        string.Empty);
+
+    private readonly ToggleSetting _loadPowerShellProfile = new(
+        "loadPowerShellProfile",
+        "Load PowerShell profile ($PROFILE)",
+        "Whether to load your PowerShell profile when running scripts. Defaults to off for faster, isolated execution.",
+        false);
+
     /// <summary>The configured default host: <c>"auto"</c>, <c>"pwsh"</c>, or <c>"powershell"</c>.</summary>
     public string DefaultHost => _defaultHost.Value ?? HostAuto;
+
+    /// <summary>The user-configured custom PowerShell path, or null when unset.</summary>
+    public string? CustomPowerShellPath =>
+        string.IsNullOrWhiteSpace(_customPowerShellPath.Value) ? null : _customPowerShellPath.Value.Trim();
+
+    /// <summary>Whether to load the user's PowerShell profile when running scripts.</summary>
+    public bool LoadPowerShellProfile => _loadPowerShellProfile.Value;
 
     /// <summary>The user-configured default timeout, clamped to the same bounds a
     /// script-declared <c>[ScriptTimeout(...)]</c> gets, so a typo'd setting (an extra
@@ -165,6 +184,8 @@ internal sealed class PaletteShellSettingsManager : JsonSettingsManager
         }
 
         Settings.Add(_defaultHost);
+        Settings.Add(_customPowerShellPath);
+        Settings.Add(_loadPowerShellProfile);
         Settings.Add(_defaultTimeoutMs);
         Settings.Add(_preferredEditor);
         Settings.Add(_scriptsFolder);

@@ -101,6 +101,8 @@ PaletteShell's top-level command has a built-in **Settings** page (the gear icon
 |---------|---------|
 | **Scripts folder** | Where PaletteShell looks for `.ps1` scripts. Changing this doesn't move your existing scripts or `pinned.txt` — run **"Reload scripts"** afterward to point PaletteShell at the new folder. |
 | **Default script host** | `Auto` (recommended), `PowerShell 7 (pwsh)`, or `Windows PowerShell 5.1` — used for any script that doesn't declare its own `[ScriptHost(...)]`. |
+| **Custom PowerShell path** | Optional custom path to `pwsh.exe` (e.g. from Windows Terminal or Microsoft Store). When set, this path is preferred for PowerShell 7. |
+| **Load PowerShell profile** | Whether to load your PowerShell `$PROFILE` when running scripts. Defaults to off for faster, isolated execution. |
 | **Default timeout** | Milliseconds to wait for a script that doesn't declare its own `[ScriptTimeout(...)]` before treating it as timed out. |
 | **Preferred editor** | Command or path used by **"Open in editor"**. Leave blank to fall back to `$VISUAL`, then `$EDITOR`, then Notepad. |
 
