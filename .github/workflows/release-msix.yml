@@ -1,0 +1,131 @@
+name: Release MSIX
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to package or repair
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Check release version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          [xml]$manifest = Get-Content PaletteShellExtension/Package.appxmanifest
+          [xml]$project = Get-Content PaletteShellExtension/PaletteShellExtension.csproj
+          if ($version -ne $manifest.Package.Identity.Version -or
+              $version -ne $project.SelectSingleNode('/Project/PropertyGroup/AppxPackageVersion').InnerText) {
+            throw "Release tag $env:RELEASE_TAG must match both package versions."
+          }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Import signing certificate
+        id: certificate
+        shell: pwsh
+        env:
+          CERT_BASE64: ${{ secrets.MSIX_SIGNING_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MSIX_SIGNING_CERT_PASSWORD }}
+        run: |
+          if (-not $env:CERT_BASE64 -or -not $env:CERT_PASSWORD) {
+            throw 'Configure MSIX_SIGNING_CERT_BASE64 and MSIX_SIGNING_CERT_PASSWORD before publishing a release.'
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'release-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_BASE64))
+            $password = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            [xml]$manifest = Get-Content PaletteShellExtension/Package.appxmanifest
+            if ($cert.Subject -ne $manifest.Package.Identity.Publisher) {
+              throw "Signing certificate subject does not match the package publisher."
+            }
+            "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+            New-Item -ItemType Directory -Path dist -Force | Out-Null
+            Export-Certificate -Cert $cert -FilePath dist/PaletteShell-signing.cer | Out-Null
+          } finally {
+            Remove-Item -LiteralPath $pfx -ErrorAction SilentlyContinue
+          }
+
+      - name: Build signed MSIX
+        shell: pwsh
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
+        run: |
+          dotnet build PaletteShellExtension/PaletteShellExtension.csproj -c Release `
+            -p:Platform=$env:PLATFORM `
+            -p:RuntimeIdentifier="win-$($env:PLATFORM.ToLowerInvariant())" `
+            -p:SelfContained=true `
+            -p:GenerateAppxPackageOnBuild=true `
+            -p:AppxBundle=Never `
+            -p:AppxPackageSigningEnabled=true `
+            -p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\release\" `
+            -p:PackageCertificateThumbprint=$env:THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX build failed.' }
+
+          $packages = @(Get-ChildItem artifacts/release -Recurse -File -Filter *.msix)
+          if ($packages.Count -ne 1) { throw "Expected one MSIX for $env:PLATFORM; found $($packages.Count)." }
+          $signature = Get-AuthenticodeSignature -LiteralPath $packages[0].FullName
+          if ($signature.SignerCertificate.Thumbprint -ne $env:THUMBPRINT) {
+            throw 'MSIX was not signed by the release certificate.'
+          }
+          [xml]$manifest = Get-Content PaletteShellExtension/Package.appxmanifest
+          $destination = "dist/PaletteShell-$($manifest.Package.Identity.Version)-$env:PLATFORM.msix"
+          Copy-Item -LiteralPath $packages[0].FullName -Destination $destination
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msix-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach MSIX to release
+    needs: package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: msix-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          $packages = @(Get-ChildItem dist -File -Filter *.msix)
+          $certificates = @(Get-ChildItem dist -File -Filter *.cer)
+          if ($packages.Count -ne 2 -or $certificates.Count -ne 1) {
+            throw 'Expected x64 and ARM64 MSIX packages and one signing certificate.'
+          }
+          $assets = @($packages.FullName) + $certificates[0].FullName
+          gh release upload $env:RELEASE_TAG $assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }

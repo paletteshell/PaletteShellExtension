@@ -26,7 +26,7 @@ This README is intentionally short so coding agents do not load the full project
 
 ## User Flow
 
-1. Install or build the extension.
+1. Install the extension from the Microsoft Store, or download the `x64` or `ARM64` `.msix` and `PaletteShell-signing.cer` from the [latest GitHub release](https://github.com/paletteshell/PaletteShellExtension/releases/latest). For the GitHub package, import the certificate into the local computer's **Trusted People** store first (administrator access required), then open the `.msix` to install it. See [Microsoft's sideloading instructions](https://learn.microsoft.com/windows/msix/package/sign-msix-package-guide#testing-distribute-to-testers-with-a-self-signed-certificate).
 2. Open Windows Command Palette and search for `PaletteShell`.
 3. Choose a scripts folder on first run, or accept `Documents\PaletteShellScripts`.
 4. Add or edit `.ps1` files in that folder.

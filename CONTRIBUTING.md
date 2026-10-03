@@ -74,6 +74,23 @@ needed to trust the unsigned test package.
 `AppxPackageVersion` in `PaletteShellExtension.csproj` and `<Identity Version="...">` in
 `Package.appxmanifest` must match — bump both together.
 
+## Publishing a GitHub release
+
+Create a GitHub release from a tag that matches the package version (for example, `0.0.9.0` or
+`v0.0.9.0`). The `Release MSIX` workflow builds signed x64 and ARM64 packages and adds both
+`.msix` files and the public signing certificate to that release. It fails if the tag and package
+versions differ or if either package is missing.
+
+The workflow requires repository secrets `MSIX_SIGNING_CERT_BASE64` (base64 encoded PFX) and
+`MSIX_SIGNING_CERT_PASSWORD` (its export password). The certificate's subject must equal the
+`Publisher` in `Package.appxmanifest`. Keep the private PFX out of the repository. Release
+packages use a dedicated self-signed certificate, so users installing from GitHub must import
+the release's `.cer` into the local computer's **Trusted People** store before installing the
+MSIX. The `.cer` contains only the public certificate. Reuse the same signing certificate for
+future releases so users do not have to trust a new certificate for every update. If the
+certificate is replaced, users must trust the new one. For an existing release with no assets,
+run the `Release MSIX` workflow manually with that release's tag.
+
 ## Submitting a change
 
 - Keep `dotnet build` and `dotnet test` (both platforms if the change could plausibly differ
